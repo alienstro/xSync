@@ -342,3 +342,86 @@ The first run on this machine gives:
    does not block the work.
 2. Which `wire_api` value does each endpoint need? xSync asks the user. It
    does not detect the value.
+
+## 17. Distribution
+
+### 17.1 Names
+
+The PyPI name `xsync` belongs to a different project. Therefore:
+
+| Item | Value |
+|---|---|
+| PyPI distribution | `xsync-cli` |
+| Import package | `xsync_cli` |
+| Command | `xsync` |
+
+The distribution name and the command name are independent. The user types
+`xsync`.
+
+### 17.2 Install
+
+```
+uv tool install xsync-cli
+pipx install xsync-cli
+```
+
+Both tools make an isolated environment. Therefore the unrelated `xsync`
+library cannot conflict with this command.
+
+### 17.3 Package data
+
+The files `adapters/rules/codex.toml` and `adapters/prompts/*.md` are package
+data, not code. The build must include them. Without them, every install
+fails at the first sync.
+
+```toml
+[tool.hatch.build.targets.wheel]
+packages = ["src/xsync_cli"]
+
+[tool.hatch.build.targets.wheel.force-include]
+"src/xsync_cli/adapters/rules" = "xsync_cli/adapters/rules"
+"src/xsync_cli/adapters/prompts" = "xsync_cli/adapters/prompts"
+```
+
+The code reads these files with `importlib.resources`. It does not use
+`__file__` paths. A `__file__` path breaks in a zip install.
+
+A test must confirm that a built wheel contains both directories.
+
+### 17.4 Project metadata
+
+```toml
+[project]
+name = "xsync-cli"
+requires-python = ">=3.11"
+dependencies = ["tomlkit>=0.13"]
+
+[project.scripts]
+xsync = "xsync_cli.cli:main"
+```
+
+### 17.5 Release steps
+
+1. Run the full test suite. All tests pass.
+2. Run `xsync codex --dry-run` against the local 9router endpoint. Confirm
+   the output.
+3. Set the version in `pyproject.toml`.
+4. Build: `uv build`.
+5. Upload to TestPyPI. Install from TestPyPI into a clean environment. Run
+   `xsync --help` and `xsync codex --dry-run`.
+6. Upload to PyPI: `uv publish`.
+
+Step 5 is mandatory. PyPI does not allow a second upload of the same version
+number, even after a delete. A broken release stays broken.
+
+### 17.6 Version policy
+
+The first release is `0.1.0`. The tool writes to `config.toml` and deletes
+files. Therefore the version stays below `1.0.0` until the field mapping
+works against a second endpoint.
+
+### 17.7 Credentials
+
+The upload needs a PyPI API token. The token belongs to the user. The token
+never enters the repository. The user supplies it through the environment
+variable `UV_PUBLISH_TOKEN` or through `~/.pypirc`.
