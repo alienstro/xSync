@@ -425,3 +425,75 @@ works against a second endpoint.
 The upload needs a PyPI API token. The token belongs to the user. The token
 never enters the repository. The user supplies it through the environment
 variable `UV_PUBLISH_TOKEN` or through `~/.pypirc`.
+
+## 18. The Claude Code adapter
+
+Date added: 2026-09-13
+
+### 18.1 What Claude Code offers
+
+Claude Code holds no catalog file like Codex. It reads two things from
+`~/.claude/settings.json`:
+
+| Key | Purpose |
+|---|---|
+| `modelPicker.options` | The rows of the `/model` picker, in order. |
+| `modelPicker.replaceBuiltInOptions` | True hides the built-in models. |
+| `env` | The variables that point Claude Code at an endpoint. |
+
+One picker row holds these fields:
+
+| Field | Meaning |
+|---|---|
+| `model` | The model id, taken word for word. |
+| `label` | The row title. |
+| `description` | The row subtitle. |
+| `behavesAs` | The id of a model that this version knows. Its prompt profile, its capability defaults, and its effort defaults then apply. |
+
+Claude Code refuses a model that it does not know:
+
+```
+"cmc/deepseek/deepseek-v4-pro" isn't described by this version's model
+catalog; update Claude Code, or map it with behavesAs on a modelPicker row
+```
+
+A model name that holds a known model id, such as
+`ed3n/claude-sonnet-5`, needs no `behavesAs`.
+
+### 18.2 The proof
+
+Each fact below comes from a test on this machine, not from a document.
+
+1. 9router answers the Anthropic API at `POST /v1/messages`.
+2. `claude -p "say ok" --model ed3n/claude-sonnet-5` answered `ok`.
+3. The same command with `cmc/deepseek/deepseek-v4-pro` failed, until a
+   picker row gave it `behavesAs = "claude-opus-4-8"`. It then answered
+   `ok`.
+4. The variables in the `env` block of `settings.json` are enough. The
+   shell needs no variable.
+
+### 18.3 The design
+
+- `xsync claude` writes `modelPicker.options` into `settings.json`.
+- `replaceBuiltInOptions` stays `false`. The built-in models stay in the
+  picker. The router models come after them. A router that stops
+  therefore leaves a working picker.
+- A rules file `adapters/rules/claude.toml` gives `behavesAs`. It uses
+  the same layers as the Codex rules: defaults, prefix, name, slug.
+- A model whose name holds a known Claude model id gets no `behavesAs`.
+  It keeps its native handling.
+- `xsync claude --init` writes the `env` block with
+  `ANTHROPIC_BASE_URL` and `ANTHROPIC_AUTH_TOKEN`.
+- `xsync claude --reset` removes only what the state file records.
+
+### 18.4 Safety
+
+The file `settings.json` holds the hooks and the settings of the user. It
+is large. Therefore:
+
+- xSync changes the key `modelPicker` only, and the key `env` only with
+  `--init`.
+- The write is atomic. xSync keeps one backup.
+- xSync hashes the file before the edit and again before the replace. On
+  a difference it stops.
+- The state file `~/.claude/.xsync-state.json` records every change.
