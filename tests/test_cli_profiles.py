@@ -100,3 +100,20 @@ def test_remove_deletes_the_profile(store_path):
     store_path.write_text('[profiles.a]\nbase_url = "http://a/v1"\nwire_api = "chat"\n')
     assert cli.main(["remove", "a"]) == 0
     assert "profiles.a" not in store_path.read_text()
+
+
+def test_a_bare_command_shows_the_help(capsys):
+    assert cli.main([]) == 0
+    out = capsys.readouterr().out
+    for name in ("setup", "list", "use", "remove", "codex"):
+        assert name in out
+
+
+def test_the_help_names_the_profile_file(capsys):
+    cli.main([])
+    assert "profiles.toml" in capsys.readouterr().out
+
+
+def test_the_help_shows_an_example(capsys):
+    cli.main([])
+    assert "xsync setup" in capsys.readouterr().out

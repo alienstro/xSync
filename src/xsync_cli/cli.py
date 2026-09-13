@@ -280,12 +280,34 @@ def cmd_codex(args: argparse.Namespace) -> int:
     return EXIT_OK
 
 
+EPILOG = """\
+examples:
+  xsync setup                      make a profile, and read the model list
+  xsync list                       show the profiles. The active one has a star
+  xsync use openrouter             set the active profile
+  xsync codex --init               connect Codex to the endpoint of the profile
+  xsync codex --dry-run            show the difference. Write nothing
+  xsync codex                      sync the models into the Codex catalog
+  xsync codex --reset              remove everything that xsync wrote
+
+files:
+  ~/.config/xsync/profiles.toml    the profiles. `xsync setup` writes this file
+  ~/.codex/<profile>-models.json   the Codex catalog that `xsync codex` writes
+  ~/.codex/config.toml             only `--init` and `--reset` write this file
+
+exit codes:
+  0 success    1 error    2 the endpoint does not answer
+"""
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="xsync",
         description="Sync the model list of an OpenAI-compatible endpoint into a harness.",
+        epilog=EPILOG,
+        formatter_class=argparse.RawDescriptionHelpFormatter,
     )
-    sub = parser.add_subparsers(dest="command", required=True)
+    sub = parser.add_subparsers(dest="command", metavar="command")
 
     sub.add_parser("setup", help="make a profile").set_defaults(func=cmd_setup)
     sub.add_parser("list", help="show the profiles").set_defaults(func=cmd_list)
@@ -314,6 +336,9 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
+    if not getattr(args, "command", None):
+        parser.print_help()
+        return EXIT_OK
     try:
         return args.func(args)
     except (ProfileError, ConfigError) as error:
