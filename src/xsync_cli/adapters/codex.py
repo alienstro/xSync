@@ -6,6 +6,7 @@ nothing about HTTP.
 
 from __future__ import annotations
 
+import json
 import tomllib
 from collections.abc import Sequence
 from dataclasses import dataclass
@@ -31,6 +32,19 @@ REASONING_LEVELS = [
 
 class AdapterError(Exception):
     """The rules file or the prompt data is wrong."""
+
+
+def _read_messages(name: str) -> dict[str, Any]:
+    """The model_messages object of one rule layer."""
+    try:
+        text = files("xsync_cli.adapters.prompts").joinpath(name).read_text(
+            encoding="utf-8"
+        )
+    except FileNotFoundError:
+        raise AdapterError(
+            f"the message file {name!r} is absent from the package."
+        ) from None
+    return json.loads(text)
 
 
 def _read_prompt(name: str) -> str:
@@ -97,12 +111,12 @@ def render_entry(model: Model, rules: Rules) -> dict[str, Any]:
         "visibility": values["visibility"],
         "supported_in_api": values["supported_in_api"],
         "priority": values["priority"],
-        "additional_speed_tiers": [],
-        "service_tiers": [],
+        "additional_speed_tiers": list(values.get("additional_speed_tiers", [])),
+        "service_tiers": [dict(tier) for tier in values.get("service_tiers", [])],
         "availability_nux": None,
         "upgrade": None,
         "base_instructions": _read_prompt(values["base_instructions_file"]),
-        "model_messages": [],
+        "model_messages": _read_messages(values["model_messages_file"]),
         "include_skills_usage_instructions": values[
             "include_skills_usage_instructions"
         ],
@@ -113,7 +127,9 @@ def render_entry(model: Model, rules: Rules) -> dict[str, Any]:
         "support_verbosity": values["support_verbosity"],
         "default_verbosity": values["default_verbosity"],
         "apply_patch_tool_type": values["apply_patch_tool_type"],
-        "web_search_tool_type": values["web_search_tool_type"] if model.search else None,
+        "web_search_tool_type": (
+            values["web_search_tool_type"] if model.search else None
+        ),
         "truncation_policy": values["truncation_policy"],
         "supports_parallel_tool_calls": model.tools,
         "supports_image_detail_original": values["supports_image_detail_original"],

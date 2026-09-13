@@ -41,3 +41,10 @@ def test_the_report_names_the_counts():
     text = result.render()
     assert "1 added" in text
     assert "1 removed" in text
+
+
+def test_a_changed_model_shows_only_a_few_field_names():
+    old = catalog(entry("a", **{f"f{i}": i for i in range(10)}))
+    new = catalog(entry("a", **{f"f{i}": i + 1 for i in range(10)}))
+    text = diff_catalogs(old, new).render()
+    assert "+7 more" in text

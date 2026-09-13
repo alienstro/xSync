@@ -1,6 +1,10 @@
 # The Codex catalog needs 33 fields for each model. The endpoint gives
 # approximately 8 of them. This file gives the others.
 #
+# Every value here comes from a catalog that works with codex-cli
+# 0.153.4. Do not invent a value. A wrong value changes how Codex
+# behaves.
+#
 # The layers apply in this order. A later layer wins:
 #   1. defaults
 #   2. prefix.<first slug segment>
@@ -8,29 +12,53 @@
 
 [defaults]
 base_instructions_file = "generic-codex.md"
+model_messages_file = "generic-codex.messages.json"
 description_template = "{slug}"
 priority = 5
 visibility = "list"
 shell_type = "shell_command"
 supported_in_api = true
 apply_patch_tool_type = "freeform"
-web_search_tool_type = "web_search"
-truncation_policy = "auto"
+web_search_tool_type = "text_and_image"
 supports_reasoning_summaries = true
-default_reasoning_summary = "auto"
-support_verbosity = false
+default_reasoning_summary = "none"
+support_verbosity = true
 default_verbosity = "medium"
-supports_image_detail_original = false
-effective_context_window_percent = 1.0
-include_skills_usage_instructions = true
+supports_image_detail_original = true
+effective_context_window_percent = 95
+include_skills_usage_instructions = false
 use_responses_lite = false
 default_context_window = 128000
+additional_speed_tiers = []
+service_tiers = []
+
+[defaults.truncation_policy]
+mode = "tokens"
+limit = 10000
 
 [prefix.cx]
 priority = 10
 
+# The two OpenAI models carry their own prompts and their own speed
+# tiers. The values come from the working catalog.
+
 [slug."cx/gpt-5.5"]
 base_instructions_file = "gpt-5.5.md"
+model_messages_file = "gpt-5.5.messages.json"
+priority = 18
+default_verbosity = "low"
+include_skills_usage_instructions = true
+additional_speed_tiers = ["fast"]
+service_tiers = [
+  { id = "priority", name = "Fast", description = "1.5x speed, increased usage" },
+]
 
 [slug."cx/gpt-5.4"]
 base_instructions_file = "gpt-5.4.md"
+model_messages_file = "gpt-5.4.messages.json"
+priority = 14
+default_verbosity = "low"
+additional_speed_tiers = ["fast"]
+service_tiers = [
+  { id = "priority", name = "Fast", description = "1.5x speed, increased usage" },
+]

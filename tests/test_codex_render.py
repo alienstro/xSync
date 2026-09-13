@@ -112,3 +112,71 @@ def test_every_required_field_is_present():
         "supports_search_tool",
     }
     assert required <= set(render_entry(model(), RULES))
+
+
+def test_the_context_percent_matches_the_working_catalog():
+    assert render_entry(model(), RULES)["effective_context_window_percent"] == 95
+
+
+def test_the_truncation_policy_is_the_working_object():
+    assert render_entry(model(), RULES)["truncation_policy"] == {
+        "mode": "tokens",
+        "limit": 10000,
+    }
+
+
+def test_the_reasoning_summary_default_matches_the_working_catalog():
+    assert render_entry(model(), RULES)["default_reasoning_summary"] == "none"
+
+
+def test_the_skills_instruction_flag_matches_the_working_catalog():
+    assert render_entry(model(), RULES)["include_skills_usage_instructions"] is False
+
+
+def test_verbosity_and_image_detail_match_the_working_catalog():
+    entry = render_entry(model(), RULES)
+    assert entry["support_verbosity"] is True
+    assert entry["supports_image_detail_original"] is True
+
+
+def test_model_messages_holds_the_instructions_template():
+    messages = render_entry(model(), RULES)["model_messages"]
+    assert isinstance(messages, dict)
+    assert messages["instructions_template"].startswith("You are Codex")
+    assert "instructions_variables" in messages
+
+
+def test_a_named_model_gets_its_own_model_messages():
+    special = render_entry(model(slug="cx/gpt-5.5"), RULES)["model_messages"]
+    generic = render_entry(model(slug="cx/other"), RULES)["model_messages"]
+    assert special != generic
+    assert len(special["instructions_template"]) > len(generic["instructions_template"])
+
+
+def test_a_plain_model_gets_no_speed_tier():
+    entry = render_entry(model(), RULES)
+    assert entry["additional_speed_tiers"] == []
+    assert entry["service_tiers"] == []
+
+
+def test_the_named_openai_models_keep_their_tiers():
+    for slug, priority, verbosity in (
+        ("cx/gpt-5.5", 18, "low"),
+        ("cx/gpt-5.4", 14, "low"),
+    ):
+        entry = render_entry(model(slug=slug), RULES)
+        assert entry["additional_speed_tiers"] == ["fast"]
+        assert entry["service_tiers"] == [
+            {"id": "priority", "name": "Fast", "description": "1.5x speed, increased usage"}
+        ]
+        assert entry["priority"] == priority
+        assert entry["default_verbosity"] == verbosity
+
+
+def test_only_gpt_5_5_asks_for_the_skills_instructions():
+    assert render_entry(model(slug="cx/gpt-5.5"), RULES)[
+        "include_skills_usage_instructions"
+    ] is True
+    assert render_entry(model(slug="cx/gpt-5.4"), RULES)[
+        "include_skills_usage_instructions"
+    ] is False

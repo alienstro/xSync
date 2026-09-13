@@ -30,10 +30,18 @@ class CatalogDiff:
                 f"- {len(self.removed)} removed    {self._sample(self.removed, limit)}"
             )
         if self.changed:
-            names = [f"{slug} ({', '.join(fields)})" for slug, fields in self.changed]
+            names = [
+                f"{slug} ({self._fields(fields)})" for slug, fields in self.changed
+            ]
             lines.append(f"~ {len(self.changed)} changed    {self._sample(names, limit)}")
         lines.append(f"  {len(self.unchanged)} unchanged")
         return "\n".join(lines)
+
+    @staticmethod
+    def _fields(fields: list[str], limit: int = 3) -> str:
+        """The field names of one changed model, cut short."""
+        head = ", ".join(fields[:limit])
+        return head if len(fields) <= limit else f"{head}, +{len(fields) - limit} more"
 
     @staticmethod
     def _sample(items: list[str], limit: int) -> str:
