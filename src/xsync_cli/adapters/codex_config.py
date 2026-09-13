@@ -68,6 +68,21 @@ def check_provider_match(config: dict[str, Any], profile: Profile) -> str | None
     return None
 
 
+def wire_api_for_url(config: dict[str, Any], base_url: str) -> str | None:
+    """The wire API that Codex already uses for one base URL.
+
+    The function gives None when no provider block holds that URL.
+    """
+    wanted = base_url.rstrip("/")
+    for table in (config.get("model_providers") or {}).values():
+        if not isinstance(table, dict):
+            continue
+        if str(table.get("base_url", "")).rstrip("/") == wanted:
+            value = table.get("wire_api")
+            return str(value) if value else None
+    return None
+
+
 def catalog_path_for(profile: Profile, codex_home: Path) -> Path:
     """The catalog file of one profile."""
     return codex_home / f"{profile.name}-models.json"

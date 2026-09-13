@@ -103,7 +103,11 @@ def init_config(
 
 
 def reset_config(config_path: Path, state: State) -> list[str]:
-    """Remove every item that the state file records."""
+    """Remove every item that the state file records.
+
+    The function keeps the backup file `<name>.bak`. The backup is the
+    only way back after a reset.
+    """
     before = file_sha256(config_path)
     document = _load_document(config_path)
     removed: list[str] = []
@@ -129,9 +133,5 @@ def reset_config(config_path: Path, state: State) -> list[str]:
         if path.exists():
             path.unlink()
             removed.append(name)
-        backup = path.with_name(path.name + ".bak")
-        if backup.exists():
-            backup.unlink()
-            removed.append(str(backup))
 
     return removed

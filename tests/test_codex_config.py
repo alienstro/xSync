@@ -102,3 +102,34 @@ def test_the_hash_changes_with_the_content(tmp_path):
     first = file_sha256(path)
     path.write_text("a = 2")
     assert file_sha256(path) != first
+
+
+def test_wire_api_for_a_known_url_is_found():
+    from xsync_cli.adapters.codex_config import wire_api_for_url
+
+    config = {
+        "model_providers": {
+            "9router": {
+                "base_url": "http://127.0.0.1:20128/v1",
+                "wire_api": "responses",
+            }
+        }
+    }
+    assert wire_api_for_url(config, "http://127.0.0.1:20128/v1") == "responses"
+
+
+def test_wire_api_ignores_a_trailing_slash():
+    from xsync_cli.adapters.codex_config import wire_api_for_url
+
+    config = {
+        "model_providers": {
+            "p": {"base_url": "http://h/v1/", "wire_api": "chat"}
+        }
+    }
+    assert wire_api_for_url(config, "http://h/v1") == "chat"
+
+
+def test_wire_api_for_an_unknown_url_is_none():
+    from xsync_cli.adapters.codex_config import wire_api_for_url
+
+    assert wire_api_for_url({}, "http://h/v1") is None

@@ -102,7 +102,7 @@ def test_reset_removes_only_the_recorded_items(tmp_path):
     assert data["model_reasoning_effort"] == "max"
 
 
-def test_reset_deletes_the_catalog_file(tmp_path):
+def test_reset_deletes_the_catalog_but_not_the_backup(tmp_path):
     config = tmp_path / "config.toml"
     config.write_text(EXISTING)
     catalog = tmp_path / "c.json"
@@ -113,7 +113,7 @@ def test_reset_deletes_the_catalog_file(tmp_path):
 
     reset_config(config, state)
     assert not catalog.exists()
-    assert not backup.exists()
+    assert backup.exists()
 
 
 def test_the_hash_guard_stops_a_concurrent_edit(tmp_path, monkeypatch):
@@ -141,3 +141,19 @@ def test_known_removals_names_the_standard_keys():
     state = known_removals("9router")
     assert "model_catalog_json" in state.keys_written
     assert "model_providers.9router" in state.blocks_written
+
+
+def test_reset_keeps_the_backup_of_the_catalog(tmp_path):
+    config = tmp_path / "config.toml"
+    config.write_text(EXISTING)
+    catalog = tmp_path / "c.json"
+    catalog.write_text('{"models": []}')
+    backup = tmp_path / "c.json.bak"
+    backup.write_text('{"models": ["old"]}')
+    state = init_config(config, profile(), catalog, "sk-1")
+
+    reset_config(config, state)
+
+    assert not catalog.exists()
+    assert backup.exists(), "the backup is the only way back. Keep it."
+    assert backup.read_text() == '{"models": ["old"]}'

@@ -6,9 +6,11 @@ import argparse
 import json
 import os
 import sys
+from getpass import getpass
 from pathlib import Path
 
 from xsync_cli.adapters.codex import load_rules, render_catalog
+from xsync_cli.core import term
 from xsync_cli.adapters.codex_config import (
     STATE_FILENAME,
     ConfigError,
@@ -19,6 +21,7 @@ from xsync_cli.adapters.codex_config import (
     default_codex_home,
     read_config,
     read_state,
+    wire_api_for_url,
     write_state,
 )
 from xsync_cli.adapters.codex_wiring import init_config, known_removals, reset_config
@@ -55,62 +58,120 @@ def open_store() -> ProfileStore:
     return store
 
 
-def _ask(prompt: str, default: str = "") -> str:
-    suffix = f" [{default}]" if default else ""
-    answer = input(f"{prompt}{suffix}: ").strip()
+def _ask(prompt: str, default: str = "", hint: str = "") -> str:
+    """Ask one question. An empty answer gives the default."""
+    if hint:
+        print(term.dim(f"   {hint}"))
+    suffix = term.dim(f" [{default}]") if default else ""
+    answer = input(f"{term.cyan('?')} {term.bold(prompt)}{suffix}: ").strip()
     return answer or default
 
 
-def _ask_list(prompt: str) -> list[str]:
-    answer = _ask(prompt)
+def _ask_secret(prompt: str, hint: str = "") -> str:
+    """Ask for a secret. The terminal shows no character."""
+    if hint:
+        print(term.dim(f"   {hint}"))
+    return getpass(f"{term.cyan('?')} {term.bold(prompt)}: ").strip()
+
+
+def _ask_list(prompt: str, hint: str = "") -> list[str]:
+    answer = _ask(prompt, hint=hint)
     return [part.strip() for part in answer.split(",") if part.strip()]
+
+
+def _ok(text: str) -> None:
+    print(f"{term.green('✓')} {text}")
+
+
+def _warn(text: str) -> None:
+    print(f"{term.yellow('!')} {text}")
+
+
+def _fail(text: str) -> None:
+    print(f"{term.red('✗')} {text}", file=sys.stderr)
 
 
 def cmd_setup(args: argparse.Namespace) -> int:
     """Make a profile."""
     store = open_store()
 
-    name = _ask("profile name")
+    print(term.heading("New xsync profile"))
+    print(term.rule())
+
+    name = _ask("Profile name", hint="a short label, for example 9router")
     if not name:
-        print("the profile name cannot be empty.", file=sys.stderr)
+        _fail("the profile name cannot be empty.")
         return EXIT_ERROR
+    if name in store.names():
+        _warn(f"the profile {name!r} exists. The answers replace it.")
 
-    base_url = _ask("base URL (for example http://127.0.0.1:20128/v1)")
+    base_url = _ask(
+        "Base URL", hint="the endpoint, for example http://127.0.0.1:20128/v1"
+    )
     if not base_url:
-        print("the base URL cannot be empty.", file=sys.stderr)
+        _fail("the base URL cannot be empty.")
         return EXIT_ERROR
 
-    api_key = _ask("API key (leave empty when the endpoint needs none)")
-    include = _ask_list("include globs, separated by a comma (optional)")
-    exclude = _ask_list("exclude globs, separated by a comma (optional)")
+    api_key = _ask_secret(
+        "API key", hint="the terminal shows nothing. Press Enter when there is no key"
+    )
+    print(f"   {term.dim('key:')} {term.dim(term.mask_key(api_key))}")
 
-    print(f"testing {base_url}/models …")
+    print(term.heading("Filters"))
+    print(
+        term.dim(
+            "   A glob pattern selects models by name. The sign * means any\n"
+            "   characters. Leave both empty to keep every model."
+        )
+    )
+    include = _ask_list(
+        "Include only these", hint="for example cx/*, ed3n/*    (empty keeps all)"
+    )
+    exclude = _ask_list(
+        "Exclude these", hint="for example *embedding*, *-image-*"
+    )
+
+    print(term.heading(f"Testing {base_url}/models"))
     try:
         models = fetch_models(base_url, api_key or None)
     except EndpointUnreachable as error:
-        print(f"error: {error}", file=sys.stderr)
+        _fail(str(error))
         return EXIT_UNREACHABLE
     except SourceError as error:
-        print(f"error: {error}", file=sys.stderr)
+        _fail(str(error))
         return EXIT_ERROR
 
-    print(f"\n{len(models)} models:")
-    for model in models:
-        window = f"{model.context_window:,}" if model.context_window else "unknown"
-        flags = ",".join(
-            flag
-            for flag, on in (
-                ("tools", model.tools),
-                ("reasoning", model.reasoning),
-                ("vision", model.vision),
-                ("search", model.search),
-            )
-            if on
-        )
-        print(f"  {model.slug:<48} {window:>12}  {flags}")
+    kept = apply_filters(models, include, exclude)
+    _ok(f"the endpoint answered with {term.bold(str(len(models)))} models")
+    if len(kept) != len(models):
+        _ok(f"the filters keep {term.bold(str(len(kept)))} models")
 
-    print()
-    wire_api = _ask(f"wire API ({' or '.join(WIRE_APIS)})", "chat")
+    _print_model_table(kept)
+
+    codex_home = default_codex_home()
+    known = wire_api_for_url(read_config(codex_home / "config.toml"), base_url)
+    print(term.heading("Wire API"))
+    if known:
+        print(
+            term.dim(
+                f"   Codex already talks to this URL with {known!r}. "
+                "Press Enter to keep it."
+            )
+        )
+    else:
+        print(
+            term.dim(
+                "   Use chat for most OpenAI-compatible servers.\n"
+                "   Use responses for the OpenAI Responses API.\n"
+                "   A wrong value breaks every request."
+            )
+        )
+    wire_api = _ask(f"Wire API ({' or '.join(WIRE_APIS)})", known or "chat")
+    if known and wire_api != known:
+        _warn(
+            f"Codex uses {known!r} for this URL. The answer {wire_api!r} "
+            "disagrees with it."
+        )
 
     try:
         profile = Profile(
@@ -123,27 +184,92 @@ def cmd_setup(args: argparse.Namespace) -> int:
             exclude=exclude,
         )
     except ProfileError as error:
-        print(f"error: {error}", file=sys.stderr)
+        _fail(str(error))
         return EXIT_ERROR
 
     store.add(profile)
     store.save()
-    print(f"\nsaved profile {name!r} to {store.path}")
-    if store.active == name:
-        print(f"profile {name!r} is now active")
+
+    print(term.heading("Saved"))
+    print(term.rule())
+    _print_profile(profile, active=store.active == profile.name)
+    print(term.dim(f"\n   file: {store.path}"))
+    print(term.heading("Next"))
+    print(f"   {term.bold('xsync codex --init')}     connect Codex to this endpoint")
+    print(f"   {term.bold('xsync codex --dry-run')}  see what would change")
+    print(f"   {term.bold('xsync codex')}            write the catalog\n")
     return EXIT_OK
+
+
+def _print_model_table(models: list) -> None:
+    """Show the models in a table."""
+    if not models:
+        _warn("no model passes the filters.")
+        return
+    slug_size = max(len(m.slug) for m in models)
+    print()
+    print(
+        "   "
+        + term.dim(term.pad("MODEL", slug_size))
+        + term.dim("  " + "CONTEXT".rjust(12))
+        + term.dim("  FEATURES")
+    )
+    for model in models:
+        window = f"{model.context_window:,}" if model.context_window else "—"
+        flags = " ".join(
+            term.green(flag)
+            for flag, on in (
+                ("tools", model.tools),
+                ("reason", model.reasoning),
+                ("vision", model.vision),
+                ("search", model.search),
+            )
+            if on
+        )
+        print(
+            "   "
+            + term.pad(model.slug, slug_size)
+            + "  "
+            + window.rjust(12)
+            + "  "
+            + (flags or term.dim("—"))
+        )
+    print()
+
+
+def _print_profile(profile: Profile, active: bool) -> None:
+    """Show one profile as a block."""
+    mark = term.green("●") if active else term.dim("○")
+    label = term.bold(profile.name) + (term.dim("  (active)") if active else "")
+    print(f"{mark} {label}")
+    rows = [
+        ("url", profile.base_url),
+        ("key", term.mask_key(profile.api_key)
+            if profile.api_key
+            else (f"${profile.api_key_env}" if profile.api_key_env else "(none)")),
+        ("wire api", profile.wire_api),
+    ]
+    if profile.include:
+        rows.append(("include", ", ".join(profile.include)))
+    if profile.exclude:
+        rows.append(("exclude", ", ".join(profile.exclude)))
+    for key, value in rows:
+        print(f"   {term.dim(key.ljust(9))} {value}")
 
 
 def cmd_list(args: argparse.Namespace) -> int:
     """Show the profiles."""
     store = open_store()
     if not store.names():
-        print("no profile exists. Run `xsync setup` first.")
+        print(term.heading("No profile"))
+        print(f"   run {term.bold('xsync setup')} to make one.\n")
         return EXIT_OK
+    print(term.heading("Profiles"))
+    print(term.rule())
     for name in store.names():
-        mark = "*" if name == store.active else " "
-        profile = store.get(name)
-        print(f"{mark} {name:<20} {profile.base_url:<40} {profile.wire_api}")
+        _print_profile(store.get(name), active=name == store.active)
+        print()
+    print(term.dim(f"   file: {store.path}\n"))
     return EXIT_OK
 
 
@@ -183,7 +309,17 @@ def _load_catalog(path: Path) -> dict | None:
         return None
 
 
-def _do_reset(codex_home: Path, profile_name: str, force: bool) -> int:
+def _confirm(question: str) -> bool:
+    """Ask for a yes. A pipe or a missing terminal gives no."""
+    if not getattr(sys.stdin, "isatty", lambda: False)():
+        return False
+    answer = input(f"{term.yellow('?')} {term.bold(question)} {term.dim('[yes/no]')}: ")
+    return answer.strip().lower() in ("y", "yes")
+
+
+def _do_reset(
+    codex_home: Path, profile_name: str, force: bool, assume_yes: bool = False
+) -> int:
     """Remove everything that xSync wrote."""
     state_path = codex_home / STATE_FILENAME
     state = read_state(state_path)
@@ -191,12 +327,25 @@ def _do_reset(codex_home: Path, profile_name: str, force: bool) -> int:
     if state is None:
         planned = known_removals(profile_name)
         if not force:
-            print("no state file exists. xSync would remove:")
+            print(term.heading("Reset without a state file"))
+            print(term.dim("   xsync would remove:"))
             for key in planned.keys_written:
-                print(f"  key    {key}")
+                print(f"   {term.red('-')} key    {key}")
             for block in planned.blocks_written:
-                print(f"  block  [{block}]")
-            print("\nadd --force to continue.", file=sys.stderr)
+                print(f"   {term.red('-')} block  [{block}]")
+            _fail("add --force to continue.")
+            return EXIT_ERROR
+        print(term.heading("Reset without a state file"))
+        print(term.dim("   xsync did not record this setup. It would remove:"))
+        for key in planned.keys_written:
+            print(f"   {term.red('-')} key    {key}")
+        for block in planned.blocks_written:
+            print(f"   {term.red('-')} block  [{block}]")
+        print(term.dim("\n   The catalog backup <name>.bak stays on the disk."))
+        if not assume_yes and not _confirm(
+            f"Remove the Codex setup of {profile_name!r}?"
+        ):
+            _fail("stopped. Nothing was removed.")
             return EXIT_ERROR
         state = State(
             profile=profile_name,
@@ -209,9 +358,13 @@ def _do_reset(codex_home: Path, profile_name: str, force: bool) -> int:
 
     removed = reset_config(codex_home / "config.toml", state)
     clear_state(state_path)
+    print(term.heading("Reset"))
+    print(term.rule())
     for name in removed:
-        print(f"removed {name}")
-    print("Codex is back at its own defaults.")
+        print(f"   {term.red('-')} {name}")
+    print(term.rule())
+    _ok("Codex is back at its own defaults.")
+    print()
     return EXIT_OK
 
 
@@ -229,7 +382,7 @@ def cmd_codex(args: argparse.Namespace) -> int:
 
     if args.reset:
         try:
-            return _do_reset(codex_home, profile.name, args.force)
+            return _do_reset(codex_home, profile.name, args.force, args.yes)
         except ConfigError as error:
             print(f"error: {error}", file=sys.stderr)
             return EXIT_ERROR
@@ -244,7 +397,10 @@ def cmd_codex(args: argparse.Namespace) -> int:
             print(f"error: {error}", file=sys.stderr)
             return EXIT_ERROR
         write_state(codex_home / STATE_FILENAME, state)
-        print(f"Codex now routes to {profile.name!r} ({profile.base_url})")
+        _ok(
+            f"Codex now routes to {term.bold(profile.name)} "
+            f"{term.dim('(' + profile.base_url + ')')}"
+        )
 
     try:
         api_key = profile.resolve_key(os.environ)
@@ -262,22 +418,58 @@ def cmd_codex(args: argparse.Namespace) -> int:
     message = check_provider_match(config, profile)
     if message:
         if args.dry_run:
-            print(f"warning:\n{message}\n")
+            _warn(message)
+            print()
         else:
-            print(f"error:\n{message}", file=sys.stderr)
+            _fail(message)
             return EXIT_ERROR
 
     catalog = render_catalog(models, load_rules())
     report = diff_catalogs(_load_catalog(catalog_path), catalog)
-    print(report.render())
+    _print_report(report, profile, len(catalog["models"]))
 
     if args.dry_run:
-        print("no files written (--dry-run)")
+        print(term.dim("   no file written (--dry-run)\n"))
         return EXIT_OK
 
     write_json_atomic(catalog_path, catalog)
-    print(f"wrote {len(catalog['models'])} models to {catalog_path}")
+    _ok(
+        f"wrote {term.bold(str(len(catalog['models'])))} models to "
+        f"{term.dim(str(catalog_path))}"
+    )
+    print()
     return EXIT_OK
+
+
+def _print_report(report, profile: Profile, total: int) -> None:
+    """Show the difference of one sync."""
+    print(term.heading(f"Sync {profile.name} → Codex"))
+    print(term.dim(f"   {profile.base_url}"))
+    print(term.rule())
+
+    if report.is_empty:
+        _ok(f"up to date. {term.bold(str(total))} models, no change")
+        return
+
+    for slug in report.added:
+        print(f"   {term.green('+')} {slug}")
+    for slug in report.removed:
+        print(f"   {term.red('-')} {term.dim(slug)}")
+    for slug, fields in report.changed:
+        head = ", ".join(fields[:3])
+        more = f" +{len(fields) - 3} more" if len(fields) > 3 else ""
+        print(f"   {term.yellow('~')} {slug}{term.dim(f'  ({head}{more})')}")
+
+    print(term.rule())
+    parts = []
+    if report.added:
+        parts.append(term.green(f"{len(report.added)} added"))
+    if report.removed:
+        parts.append(term.red(f"{len(report.removed)} removed"))
+    if report.changed:
+        parts.append(term.yellow(f"{len(report.changed)} changed"))
+    parts.append(term.dim(f"{len(report.unchanged)} unchanged"))
+    print("   " + "   ".join(parts))
 
 
 EPILOG = """\
@@ -328,6 +520,9 @@ def build_parser() -> argparse.ArgumentParser:
         "--reset", action="store_true", help="remove everything xSync wrote"
     )
     codex.add_argument("--force", action="store_true", help="reset without a state file")
+    codex.add_argument(
+        "--yes", action="store_true", help="answer yes to the reset question"
+    )
     codex.set_defaults(func=cmd_codex)
 
     return parser

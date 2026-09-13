@@ -41,7 +41,7 @@ def test_dry_run_writes_nothing(home, monkeypatch, capsys):
     monkeypatch.setattr(cli, "fetch_models", stub(["a/one"]))
     assert cli.main(["codex", "--dry-run"]) == 0
     assert not (home / "p-models.json").exists()
-    assert "no files written" in capsys.readouterr().out
+    assert "no file written" in capsys.readouterr().out
 
 
 def test_the_report_names_the_added_models(home, monkeypatch, capsys):
@@ -139,3 +139,69 @@ def test_a_profile_override_uses_the_named_profile(home, monkeypatch):
     )
     monkeypatch.setattr(cli, "fetch_models", stub(["a/one"]))
     assert cli.main(["codex", "--profile", "q", "--dry-run"]) == 0
+
+
+def test_the_sync_output_names_the_profile_and_the_endpoint(home, monkeypatch, capsys):
+    monkeypatch.setattr(cli, "fetch_models", stub(["a/one"]))
+    cli.main(["codex", "--dry-run"])
+    out = capsys.readouterr().out
+    assert "p" in out
+    assert "http://h/v1" in out
+
+
+def test_the_sync_output_lists_added_models_on_their_own_lines(
+    home, monkeypatch, capsys
+):
+    monkeypatch.setattr(cli, "fetch_models", stub(["a/one", "b/two"]))
+    cli.main(["codex", "--dry-run"])
+    lines = capsys.readouterr().out.splitlines()
+    assert any(line.strip().endswith("a/one") for line in lines)
+    assert any(line.strip().endswith("b/two") for line in lines)
+
+
+def test_an_unchanged_sync_says_so(home, monkeypatch, capsys):
+    monkeypatch.setattr(cli, "fetch_models", stub(["a/one"]))
+    cli.main(["codex"])
+    capsys.readouterr()
+    cli.main(["codex", "--dry-run"])
+    assert "up to date" in capsys.readouterr().out
+
+
+def test_reset_force_asks_before_it_removes(home, monkeypatch, capsys):
+    asked = {}
+
+    def fake_input(prompt=""):
+        asked["prompt"] = prompt
+        return "no"
+
+    monkeypatch.setattr("builtins.input", fake_input)
+    monkeypatch.setattr(cli.sys.stdin, "isatty", lambda: True, raising=False)
+
+    (home / "config.toml").write_text(
+        'model_provider = "p"\nmodel_catalog_json = "/x.json"\n\n'
+        '[model_providers.p]\nbase_url = "http://h/v1"\n'
+    )
+    assert cli.main(["codex", "--reset", "--force"]) == 1
+    assert "p" in asked["prompt"]
+    assert "model_provider" in (home / "config.toml").read_text()
+
+
+def test_reset_force_removes_after_a_yes(home, monkeypatch):
+    monkeypatch.setattr("builtins.input", lambda prompt="": "yes")
+    monkeypatch.setattr(cli.sys.stdin, "isatty", lambda: True, raising=False)
+
+    (home / "config.toml").write_text(
+        'model_provider = "p"\nmodel_catalog_json = "/x.json"\n\n'
+        '[model_providers.p]\nbase_url = "http://h/v1"\n'
+    )
+    assert cli.main(["codex", "--reset", "--force"]) == 0
+    assert "model_provider" not in (home / "config.toml").read_text()
+
+
+def test_reset_force_needs_no_answer_without_a_terminal(home, monkeypatch):
+    monkeypatch.setattr(cli.sys.stdin, "isatty", lambda: False, raising=False)
+    (home / "config.toml").write_text(
+        'model_provider = "p"\nmodel_catalog_json = "/x.json"\n\n'
+        '[model_providers.p]\nbase_url = "http://h/v1"\n'
+    )
+    assert cli.main(["codex", "--reset", "--force", "--yes"]) == 0

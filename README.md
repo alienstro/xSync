@@ -65,7 +65,8 @@ Run this command again when the endpoint changes.
 | `xsync codex --profile <name>` | Use another profile for one run. |
 | `xsync codex --init` | Connect Codex to the endpoint of the profile. |
 | `xsync codex --reset` | Remove everything that xSync wrote. |
-| `xsync codex --reset --force` | Reset when no state file exists. |
+| `xsync codex --reset --force` | Reset when no state file exists. It asks first. |
+| `xsync codex --reset --force --yes` | Reset with no question. Use this in a script. |
 
 Exit codes: `0` for success, `1` for an error, `2` when the endpoint does not
 answer.
@@ -108,8 +109,21 @@ A profile uses `api_key` or `api_key_env`, but not both. Use `api_key_env`
 when you share the file. A profile with neither key sends no `Authorization`
 header.
 
-The `include` and `exclude` lists hold glob patterns. An empty `include`
-list keeps every model. The `exclude` list always wins.
+## The filters
+
+A glob pattern selects a model by name. The sign `*` means any characters.
+
+| Rule | Effect |
+|---|---|
+| `include = []` | Keep every model. This is the default. |
+| `include = ["cx/*", "ed3n/*"]` | Keep only the models of those two providers. |
+| `exclude = ["*embedding*"]` | Drop every model with `embedding` in the name. |
+| `exclude = ["*-image-*", "*-tts-*"]` | Drop the image models and the speech models. |
+
+The `exclude` list always wins over the `include` list. Use the filters when
+an endpoint serves many models that you never choose in Codex.
+
+The match ignores the letter case.
 
 ## Safety
 
@@ -124,9 +138,21 @@ list keeps every model. The `exclude` list always wins.
 - `--reset` removes only what the state file `~/.codex/.xsync-state.json`
   records. It never restores an old copy of `config.toml`, because Codex
   adds project entries to that file over time.
+- `--reset` keeps the catalog backup `<name>.bak`. The backup is the only
+  way back after a reset.
 - With no state file, `--reset` prints the keys that it would remove and
-  then stops. Add `--force` to continue.
-- xSync never prints an API key.
+  then stops. Add `--force` to continue. The command then asks a question
+  before it removes anything. Add `--yes` to answer the question in a
+  script.
+- The setup hides the API key while you type it. It then shows the first
+  five characters only, and it never shows the length of the key.
+- xSync never prints a whole API key.
+
+## The color
+
+xSync writes color for a terminal. It writes plain text for a pipe, for a
+dumb terminal, and when `NO_COLOR` holds a value. Set `FORCE_COLOR=1` to
+keep the color in a pipe.
 
 ## What xSync reads and what it writes
 
