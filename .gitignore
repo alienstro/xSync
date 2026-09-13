@@ -1,3 +1,6 @@
+# Superpowers working documents
+docs/superpowers/
+
 # Secrets
 .env
 .env.*

@@ -488,36 +488,111 @@ def _print_report(report, profile: Profile, total: int) -> None:
     print("   " + "   ".join(parts))
 
 
-EPILOG = """\
-examples:
-  xsync setup                      make a profile, and read the model list
-  xsync list                       show the profiles. The active one has a star
-  xsync use openrouter             set the active profile
+HELP_GROUPS = (
+    (
+        "PROFILES",
+        (
+            ("setup", "make a profile, and read the model list"),
+            ("list", "show the profiles. The active one has a dot"),
+            ("use <name>", "set the active profile"),
+            ("remove <name>", "delete a profile"),
+        ),
+    ),
+    (
+        "HARNESSES",
+        (
+            ("codex", "open a Codex on the profile, in its own home"),
+            ("claude", "open a Claude Code the same way"),
+            ("<harness> apply", "write the real harness of the user"),
+        ),
+    ),
+    (
+        "HELP",
+        (
+            ("help", "show this page"),
+            ("help <command>", "show the options of one command"),
+        ),
+    ),
+)
 
-  xsync codex                      open a Codex on the profile, in its own home
-  xsync claude                     open a Claude Code the same way
-  xsync claude -- --model a/b      arguments after -- go to the harness
+HELP_OPTIONS = (
+    ("--profile <name>", "use another profile for one run"),
+    ("-- <args>", "send the arguments after -- to the harness"),
+    ("apply --dry-run", "show the difference. Write nothing"),
+    ("apply --reset", "remove everything that xsync wrote"),
+)
 
-  xsync codex apply                write the real Codex of the user
-  xsync claude apply               write the real Claude Code of the user
-  xsync codex apply --dry-run      show the difference. Write nothing
-  xsync codex apply --reset        remove everything that xsync wrote
+HELP_FILES = (
+    ("~/.config/xsync/profiles.toml", "the profiles"),
+    ("~/.config/xsync/homes/", "one home for each profile and harness"),
+    ("~/.codex, ~/.claude", "only `apply` writes these"),
+)
 
-files:
-  ~/.config/xsync/profiles.toml    the profiles. `xsync setup` writes this file
-  ~/.config/xsync/homes/           one home for each profile and each harness
-  ~/.codex, ~/.claude              only `apply` writes these
+HELP_EXIT = (
+    ("0", "success"),
+    ("1", "an error"),
+    ("2", "the endpoint does not answer"),
+)
 
-exit codes:
-  0 success    1 error    2 the endpoint does not answer
-"""
+
+def _version() -> str:
+    """The installed version of the tool."""
+    try:
+        from importlib.metadata import version
+
+        return version("xsync-cli")
+    except Exception:  # noqa: BLE001
+        return "unknown"
+
+
+def render_help() -> str:
+    """The help page of the tool."""
+    width = 30
+    lines: list[str] = []
+
+    lines.append("")
+    lines.append(f"  {term.bold(term.cyan('xsync'))} {term.dim('v' + _version())}")
+    lines.append(
+        term.dim(
+            "  Sync the models of an OpenAI-compatible endpoint into a harness."
+        )
+    )
+    lines.append("")
+
+    for title, rows in HELP_GROUPS:
+        lines.append(f"  {term.bold(title)}")
+        for name, text in rows:
+            lines.append(f"    {term.pad(term.green(name), width)}{term.dim(text)}")
+        lines.append("")
+
+    lines.append(f"  {term.bold('OPTIONS')}")
+    for name, text in HELP_OPTIONS:
+        lines.append(f"    {term.pad(term.yellow(name), width)}{term.dim(text)}")
+    lines.append("")
+
+    lines.append(f"  {term.bold('FILES')}")
+    for name, text in HELP_FILES:
+        lines.append(f"    {term.pad(name, width)}{term.dim(text)}")
+    lines.append("")
+
+    lines.append(f"  {term.bold('EXIT CODES')}")
+    codes = "   ".join(
+        f"{term.bold(code)} {term.dim(text)}" for code, text in HELP_EXIT
+    )
+    lines.append(f"    {codes}")
+    lines.append("")
+
+    lines.append(f"  {term.dim('start here:')} {term.bold('xsync setup')}")
+    lines.append("")
+    return "\n".join(lines)
+
 
 
 def cmd_help(args: argparse.Namespace) -> int:
     """Show the help of the tool, or the help of one command."""
     parser = build_parser()
     if not args.topic:
-        parser.print_help()
+        print(render_help())
         return EXIT_OK
 
     actions = [
@@ -841,8 +916,6 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="xsync",
         description="Sync the model list of an OpenAI-compatible endpoint into a harness.",
-        epilog=EPILOG,
-        formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     sub = parser.add_subparsers(dest="command", metavar="command")
 
@@ -906,7 +979,7 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(mine)
     args.extra = theirs
     if not getattr(args, "command", None):
-        parser.print_help()
+        print(render_help())
         return EXIT_OK
     try:
         return args.func(args)

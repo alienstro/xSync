@@ -1,14 +1,28 @@
 # xsync-cli
 
-Sync the model list of an OpenAI-compatible endpoint into the Codex model
-catalog.
+Point Codex and Claude Code at any OpenAI-compatible endpoint, with every
+model of that endpoint in the model picker.
 
-Codex reads its model list from a large JSON catalog file. A person must
-write that file by hand. The file becomes wrong when the endpoint adds a
-model or drops a model. `xsync` writes the file for you.
+```
+$ xsync claude
 
-    xsync codex
-    wrote 35 models to /Users/you/.codex/9router-models.json
+  claude · 9router
+    http://127.0.0.1:20128/v1
+    home: ~/.config/xsync/homes/9router/claude
+  ✓ 35 models ready. Your real claude is untouched.
+```
+
+A harness keeps its model list in a settings file. A person must write that
+file by hand, and the file becomes wrong when the endpoint adds a model or
+drops one. xSync writes the file for you.
+
+xSync opens the harness in a home of its own. The settings of the user stay
+as they are. Add `apply` when you do want to change them.
+
+| Harness | Needs |
+|---|---|
+| Codex | An endpoint that answers `GET /v1/models`. |
+| Claude Code | The same, and `POST /v1/messages` for the requests. |
 
 ## Install
 
@@ -141,20 +155,22 @@ stops therefore leaves a working picker.
 
 ## Switch between endpoints
 
-Codex holds one model provider. Therefore one profile is active at a time.
+Each profile gets a home of its own. Therefore two endpoints never mix:
 
-    xsync codex --profile openrouter --init
+    xsync codex --profile openrouter
+    xsync codex --profile 9router
 
-This command points Codex at the other endpoint and fills the catalog in one
-step.
+A harness holds one model provider. Therefore `apply` writes one profile at
+a time:
 
-`xsync codex --profile X` without `--init` fills the catalog from X while
-Codex still routes somewhere else. Every model then fails at request time.
-xSync finds this mismatch before it writes, and it stops:
+    xsync codex apply --profile openrouter
 
-    catalog would come from "openrouter" (https://openrouter.ai/api/v1)
-    but Codex routes to "9router" (http://127.0.0.1:20128/v1)
-    run: xsync codex --profile openrouter --init
+`apply` always points the harness at the endpoint of the profile, so the
+model list and the endpoint always agree. A dry run does not point anything
+at anything, so it warns when the two disagree:
+
+    the rows would come from "openrouter" (https://openrouter.ai/api/v1)
+    but Claude Code talks to http://127.0.0.1:20128/v1
 
 ## The profile file
 
@@ -189,29 +205,35 @@ A glob pattern selects a model by name. The sign `*` means any characters.
 | `exclude = ["*-image-*", "*-tts-*"]` | Drop the image models and the speech models. |
 
 The `exclude` list always wins over the `include` list. Use the filters when
-an endpoint serves many models that you never choose in Codex.
+an endpoint serves many models that you never choose in a harness.
 
 The match ignores the letter case.
 
 ## Safety
 
+**The everyday commands write nothing outside `~/.config/xsync/`.** Only
+`apply` touches `~/.codex` or `~/.claude`.
+
 - The catalog write is atomic. xSync writes a temporary file, confirms the
   JSON, and then replaces the target. It keeps one backup with the suffix
   `.bak`.
-- The everyday `xsync codex` command never opens `config.toml` for writing.
-  Only `--init` and `--reset` do.
-- Codex writes `config.toml` while it runs. Therefore `--init` and `--reset`
-  hash the file before the edit and again before the replace. On a
-  difference they stop and write nothing.
-- `--reset` removes only what the state file `~/.codex/.xsync-state.json`
-  records. It never restores an old copy of `config.toml`, because Codex
-  adds project entries to that file over time.
-- `--reset` keeps the catalog backup `<name>.bak`. The backup is the only
-  way back after a reset.
-- With no state file, `--reset` prints the keys that it would remove and
-  then stops. Add `--force` to continue. The command then asks a question
-  before it removes anything. Add `--yes` to answer the question in a
-  script.
+- A harness writes its own settings file while it runs. Therefore `apply`
+  hashes the file before the edit and again before the replace. On a
+  difference it stops and writes nothing.
+- Claude Code rewrites `settings.json` from its own memory. An `apply` that
+  runs while Claude Code is open can therefore disappear. Close Claude Code
+  first, or use `xsync claude` and change nothing.
+- `apply --dry-run` writes nothing at all. It does not point the harness at
+  the endpoint either.
+- `apply --reset` removes only what the state file records. It never
+  restores an old copy of the settings, because a harness adds its own
+  entries to that file over time.
+- `apply --reset` keeps the backup `<name>.bak`. The backup is the only way
+  back after a reset.
+- With no state file, `apply --reset` prints the keys that it would remove
+  and then stops. Add `--force` to continue. The command then asks a
+  question before it removes anything. Add `--yes` to answer the question in
+  a script.
 - The setup hides the API key while you type it. It then shows the first
   five characters only, and it never shows the length of the key.
 - xSync never prints a whole API key.
@@ -228,9 +250,14 @@ keep the color in a pipe.
 |---|---|---|
 | `{base_url}/models` | yes | no |
 | `~/.config/xsync/profiles.toml` | yes | yes |
-| `~/.codex/<profile>-models.json` | yes | yes |
-| `~/.codex/config.toml` | yes | only with `--init` or `--reset` |
-| `~/.codex/.xsync-state.json` | yes | only with `--init` or `--reset` |
+| `~/.config/xsync/homes/...` | yes | yes |
+| `~/.codex/config.toml` | yes | only with `apply` |
+| `~/.codex/<profile>-models.json` | yes | only with `apply` |
+| `~/.claude/settings.json` | yes | only with `apply` |
+| `.xsync-state.json` in each home | yes | only with `apply` |
+
+xSync copies the real settings file when it builds an isolated home. It
+reads that file. It never writes it.
 
 ## The catalog fields
 

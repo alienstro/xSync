@@ -194,3 +194,34 @@ def test_the_help_command_can_explain_one_command(capsys):
 def test_the_help_of_an_unknown_command_fails(capsys):
     assert cli.main(["help", "nope"]) == 1
     assert "nope" in capsys.readouterr().err
+
+
+def test_the_help_groups_the_commands(capsys):
+    cli.main([])
+    out = capsys.readouterr().out
+    for group in ("PROFILES", "HARNESSES", "FILES"):
+        assert group in out
+
+
+def test_the_help_names_the_version(capsys):
+    from importlib.metadata import version
+
+    cli.main([])
+    assert version("xsync-cli") in capsys.readouterr().out
+
+
+def test_the_help_shows_every_command(capsys):
+    cli.main([])
+    out = capsys.readouterr().out
+    for name in ("setup", "list", "use", "remove", "codex", "claude", "help"):
+        assert name in out
+
+
+def test_the_help_explains_apply(capsys):
+    cli.main([])
+    assert "apply" in capsys.readouterr().out
+
+
+def test_the_help_holds_no_escape_code_in_a_pipe(capsys):
+    cli.main([])
+    assert "\x1b[" not in capsys.readouterr().out
