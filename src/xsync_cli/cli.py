@@ -518,6 +518,7 @@ HELP_GROUPS = (
 HELP_OPTIONS = (
     ("--profile <name>", "use another profile for one run"),
     ("-- <args>", "send the arguments after -- to the harness"),
+    ("--yolo", "start the harness with no permission question"),
     ("apply --dry-run", "show the difference. Write nothing"),
     ("apply --reset", "remove everything that xsync wrote"),
 )
@@ -812,10 +813,23 @@ def _models_for(profile) -> tuple[list | None, int]:
     return apply_filters(models, profile.include, profile.exclude), EXIT_OK
 
 
-def _extra_args(args: argparse.Namespace) -> list[str]:
+# The flag that makes one harness skip every permission question.
+# A user asks for it with `--yolo`.
+YOLO_FLAG = {
+    "codex": "--dangerously-bypass-approvals-and-sandbox",
+    "claude": "--dangerously-skip-permissions",
+}
+
+
+def _extra_args(args: argparse.Namespace, harness: str = "") -> list[str]:
     """The arguments that go to the harness."""
     extra = list(getattr(args, "extra", None) or [])
-    return extra[1:] if extra and extra[0] == "--" else extra
+    if extra and extra[0] == "--":
+        extra = extra[1:]
+    flag = YOLO_FLAG.get(harness, "")
+    if getattr(args, "yolo", False) and flag and flag not in extra:
+        extra = [flag, *extra]
+    return extra
 
 
 def _open_harness(args: argparse.Namespace, harness: str) -> int:
@@ -854,7 +868,7 @@ def _open_harness(args: argparse.Namespace, harness: str) -> int:
     print()
 
     try:
-        launch(command, variable, str(home), _extra_args(args))
+        launch(command, variable, str(home), _extra_args(args, harness))
     except HomeError as error:
         _fail(str(error))
         return EXIT_ERROR
@@ -908,6 +922,11 @@ def _add_harness_arguments(parser: argparse.ArgumentParser) -> None:
     )
     parser.add_argument(
         "--yes", action="store_true", help="apply: answer yes to the reset question"
+    )
+    parser.add_argument(
+        "--yolo",
+        action="store_true",
+        help="start the harness with no permission question. Use it with care",
     )
     parser.set_defaults(extra=[])
 

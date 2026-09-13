@@ -142,3 +142,23 @@ def test_an_unreachable_endpoint_stops_a_launch(env, spy, monkeypatch):
     monkeypatch.setattr(cli, "fetch_models", failing)
     assert cli.main(["codex"]) == 2
     assert "command" not in spy
+
+
+def test_yolo_bypasses_the_claude_permission_prompt(env, spy):
+    assert cli.main(["claude", "--yolo"]) == 0
+    assert spy["args"] == ["--dangerously-skip-permissions"]
+
+
+def test_yolo_bypasses_the_codex_approval_prompt(env, spy):
+    assert cli.main(["codex", "--yolo"]) == 0
+    assert spy["args"] == ["--dangerously-bypass-approvals-and-sandbox"]
+
+
+def test_yolo_keeps_the_arguments_of_the_user(env, spy):
+    assert cli.main(["claude", "--yolo", "--", "--model", "a/one"]) == 0
+    assert spy["args"] == ["--dangerously-skip-permissions", "--model", "a/one"]
+
+
+def test_yolo_never_repeats_a_flag_the_user_gave(env, spy):
+    assert cli.main(["claude", "--yolo", "--", "--dangerously-skip-permissions"]) == 0
+    assert spy["args"] == ["--dangerously-skip-permissions"]

@@ -90,6 +90,7 @@ you use it.
 | `xsync <harness> apply --reset` | Remove everything that xSync wrote. |
 | `xsync <harness> apply --reset --force --yes` | Reset with no question. |
 | `xsync <harness> --profile <name>` | Use another profile for one run. |
+| `xsync <harness> --yolo` | Start the harness with no permission question. |
 
 ## The isolated home
 
