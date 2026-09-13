@@ -20,6 +20,7 @@ shell_type = "shell_command"
 supported_in_api = true
 apply_patch_tool_type = "freeform"
 web_search_tool_type = "text_and_image"
+default_reasoning_level = "medium"
 supports_reasoning_summaries = true
 default_reasoning_summary = "none"
 support_verbosity = true

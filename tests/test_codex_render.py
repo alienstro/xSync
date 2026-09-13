@@ -45,7 +45,8 @@ def test_a_reasoning_model_gets_four_levels():
 def test_a_plain_model_gets_no_level():
     entry = render_entry(model(reasoning=False), RULES)
     assert entry["supported_reasoning_levels"] == []
-    assert entry["default_reasoning_level"] is None
+    # The level stays a string. Codex stops on a null here.
+    assert entry["default_reasoning_level"] == "medium"
 
 
 def test_a_vision_model_accepts_an_image():
@@ -180,3 +181,34 @@ def test_only_gpt_5_5_asks_for_the_skills_instructions():
     assert render_entry(model(slug="cx/gpt-5.4"), RULES)[
         "include_skills_usage_instructions"
     ] is False
+
+
+def test_the_search_tool_type_is_never_null():
+    """Codex accepts a string or a map here. A null stops Codex."""
+    for search in (True, False):
+        entry = render_entry(model(search=search), RULES)
+        assert entry["web_search_tool_type"] == "text_and_image"
+
+
+def test_the_reasoning_level_is_never_null():
+    """Codex accepts a string here. A null stops Codex."""
+    for reasoning in (True, False):
+        entry = render_entry(model(reasoning=reasoning), RULES)
+        assert isinstance(entry["default_reasoning_level"], str)
+
+
+def test_only_the_known_fields_may_hold_a_null():
+    """The working catalog holds a null in two fields only."""
+    allowed = {"availability_nux", "upgrade"}
+    for slug in ("cmc/a/b", "cx/gpt-5.5"):
+        for reasoning in (True, False):
+            for search in (True, False):
+                entry = render_entry(
+                    model(slug=slug, reasoning=reasoning, search=search), RULES
+                )
+                nulls = {k for k, v in entry.items() if v is None}
+                assert nulls <= allowed, f"{slug} has an unexpected null: {nulls}"
+
+
+def test_a_plain_model_still_reports_no_search():
+    assert render_entry(model(search=False), RULES)["supports_search_tool"] is False

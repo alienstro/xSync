@@ -103,7 +103,8 @@ def render_entry(model: Model, rules: Rules) -> dict[str, Any]:
         "slug": model.slug,
         "display_name": values.get("display_name") or _display_name(model),
         "description": str(values["description_template"]).format(slug=model.slug),
-        "default_reasoning_level": "medium" if model.reasoning else None,
+        # Codex accepts a string here. A null stops Codex at startup.
+        "default_reasoning_level": values["default_reasoning_level"],
         "supported_reasoning_levels": (
             [dict(level) for level in REASONING_LEVELS] if model.reasoning else []
         ),
@@ -127,9 +128,10 @@ def render_entry(model: Model, rules: Rules) -> dict[str, Any]:
         "support_verbosity": values["support_verbosity"],
         "default_verbosity": values["default_verbosity"],
         "apply_patch_tool_type": values["apply_patch_tool_type"],
-        "web_search_tool_type": (
-            values["web_search_tool_type"] if model.search else None
-        ),
+        # Codex accepts a string or a map here. A null stops Codex at
+        # startup. The flag supports_search_tool carries the fact from
+        # the endpoint.
+        "web_search_tool_type": values["web_search_tool_type"],
         "truncation_policy": values["truncation_policy"],
         "supports_parallel_tool_calls": model.tools,
         "supports_image_detail_original": values["supports_image_detail_original"],
