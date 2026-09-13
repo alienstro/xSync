@@ -129,7 +129,7 @@ def test_setup_hides_the_key_while_the_user_types(store_path, monkeypatch, capsy
 
     def fake_getpass(prompt=""):
         asked["prompt"] = prompt
-        return "sk-92465eb0c2f2e2d5"
+        return "sk-test-000000000000"
 
     answers = iter(["p", "http://h/v1", "", "", "chat"])
     monkeypatch.setattr("builtins.input", lambda prompt="": next(answers))
@@ -140,14 +140,14 @@ def test_setup_hides_the_key_while_the_user_types(store_path, monkeypatch, capsy
     assert "API key" in asked["prompt"]
 
     out = capsys.readouterr().out
-    assert "sk-92…" in out
-    assert "sk-92465eb0c2f2e2d5" not in out
+    assert "sk-te…" in out
+    assert "sk-test-000000000000" not in out
 
 
 def test_setup_never_shows_the_key_length(store_path, monkeypatch, capsys):
     answers = iter(["p", "http://h/v1", "", "", "chat"])
     monkeypatch.setattr("builtins.input", lambda prompt="": next(answers))
-    monkeypatch.setattr(cli, "getpass", lambda prompt="": "sk-92465eb0c2f2e2d5")
+    monkeypatch.setattr(cli, "getpass", lambda prompt="": "sk-test-000000000000")
     monkeypatch.setattr(cli, "fetch_models", fake_fetch(["a/one"]))
 
     cli.main(["setup"])

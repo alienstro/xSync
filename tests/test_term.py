@@ -62,7 +62,7 @@ def test_the_width_of_a_styled_string_ignores_the_codes(monkeypatch):
 
 
 def test_mask_key_keeps_the_first_five_characters():
-    assert term.mask_key("sk-92465eb0c2f2e2d5") == "sk-92…"
+    assert term.mask_key("sk-test-000000000000") == "sk-te…"
 
 
 def test_mask_key_of_a_short_key_shows_no_character():
