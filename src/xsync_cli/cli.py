@@ -11,6 +11,19 @@ from pathlib import Path
 
 from xsync_cli.adapters.codex import load_rules, render_catalog
 from xsync_cli.core import term
+from xsync_cli.adapters.claude import load_rules as load_claude_rules
+from xsync_cli.adapters.claude import render_rows
+from xsync_cli.adapters import claude_config
+from xsync_cli.adapters.claude_config import (
+    ClaudeConfigError,
+    check_endpoint_match,
+    current_rows,
+    default_claude_home,
+    init_settings,
+    read_settings,
+    settings_path_for,
+    write_picker,
+)
 from xsync_cli.adapters.codex_config import (
     STATE_FILENAME,
     ConfigError,
@@ -516,6 +529,183 @@ def cmd_help(args: argparse.Namespace) -> int:
     return EXIT_ERROR
 
 
+CLAUDE_MANAGED_KEYS = ("modelPicker", "env.ANTHROPIC_BASE_URL", "env.ANTHROPIC_AUTH_TOKEN")
+
+
+def _claude_reset(claude_home: Path, profile_name: str, force: bool, yes: bool) -> int:
+    """Remove everything that xSync wrote into the Claude settings."""
+    state_path = claude_home / claude_config.STATE_FILENAME
+    state = claude_config.read_state(state_path)
+
+    if state is None:
+        if not force:
+            print(term.heading("Reset without a state file"))
+            print(term.dim("   xsync did not record this setup. It would remove:"))
+            for key in CLAUDE_MANAGED_KEYS:
+                print(f"   {term.red('-')} {key}")
+            _fail("add --force to continue.")
+            return EXIT_ERROR
+        print(term.heading("Reset without a state file"))
+        for key in CLAUDE_MANAGED_KEYS:
+            print(f"   {term.red('-')} {key}")
+        if not yes and not _confirm(
+            f"Remove the Claude Code setup of {profile_name!r}?"
+        ):
+            _fail("stopped. Nothing was removed.")
+            return EXIT_ERROR
+        state = claude_config.State(
+            profile=profile_name, keys_written=list(CLAUDE_MANAGED_KEYS)
+        )
+
+    removed = claude_config.reset_settings(settings_path_for(claude_home), state)
+    claude_config.clear_state(state_path)
+    print(term.heading("Reset"))
+    print(term.rule())
+    for name in removed:
+        print(f"   {term.red('-')} {name}")
+    print(term.rule())
+    _ok("Claude Code is back at its own defaults.")
+    print()
+    return EXIT_OK
+
+
+def cmd_claude(args: argparse.Namespace) -> int:
+    """Sync a profile into the Claude Code model picker."""
+    store = open_store()
+    claude_home = default_claude_home()
+    settings_file = settings_path_for(claude_home)
+    state_path = claude_home / claude_config.STATE_FILENAME
+
+    try:
+        profile = store.get(args.profile) if args.profile else store.active_profile()
+    except ProfileError as error:
+        _fail(str(error))
+        return EXIT_ERROR
+
+    if args.reset:
+        try:
+            return _claude_reset(claude_home, profile.name, args.force, args.yes)
+        except ClaudeConfigError as error:
+            _fail(str(error))
+            return EXIT_ERROR
+
+    keys_written: list[str] = []
+    if args.init:
+        try:
+            api_key = profile.resolve_key(os.environ)
+            state = init_settings(settings_file, profile, api_key)
+        except (ClaudeConfigError, ProfileError) as error:
+            _fail(str(error))
+            return EXIT_ERROR
+        keys_written = list(state.keys_written)
+        _ok(
+            f"Claude Code now talks to {term.bold(profile.name)} "
+            f"{term.dim('(' + profile.base_url + ')')}"
+        )
+
+    try:
+        api_key = profile.resolve_key(os.environ)
+        models = fetch_models(profile.base_url, api_key)
+    except EndpointUnreachable as error:
+        _fail(str(error))
+        return EXIT_UNREACHABLE
+    except (SourceError, ProfileError) as error:
+        _fail(str(error))
+        return EXIT_ERROR
+
+    models = apply_filters(models, profile.include, profile.exclude)
+
+    try:
+        settings = read_settings(settings_file)
+    except ClaudeConfigError as error:
+        _fail(str(error))
+        return EXIT_ERROR
+
+    message = check_endpoint_match(settings, profile)
+    if message:
+        if args.dry_run:
+            _warn(message)
+            print()
+        else:
+            _fail(message)
+            return EXIT_ERROR
+
+    rules = load_claude_rules()
+    rows = render_rows(models, rules)
+    _print_claude_report(rows, current_rows(settings), profile)
+
+    if args.dry_run:
+        print(term.dim("   no file written (--dry-run)\n"))
+        return EXIT_OK
+
+    try:
+        write_picker(settings_file, rows)
+    except ClaudeConfigError as error:
+        _fail(str(error))
+        return EXIT_ERROR
+
+    keys_written.append("modelPicker")
+    claude_config.write_state(
+        state_path,
+        claude_config.State(
+            profile=profile.name,
+            keys_written=sorted(set(keys_written)),
+            settings_sha256=claude_config.file_sha256(settings_file),
+            written_at=claude_config._now(),
+        ),
+    )
+    _ok(
+        f"wrote {term.bold(str(len(rows)))} models to "
+        f"{term.dim(str(settings_file))}"
+    )
+    print(term.dim("   run /model in Claude Code to pick one\n"))
+    return EXIT_OK
+
+
+def _print_claude_report(rows, old_rows, profile: Profile) -> None:
+    """Show the difference of one Claude sync."""
+    print(term.heading(f"Sync {profile.name} → Claude Code"))
+    print(term.dim(f"   {profile.base_url}"))
+    print(term.rule())
+
+    old = {row.get("model"): row for row in old_rows}
+    new = {row["model"]: row for row in rows}
+
+    added = [slug for slug in new if slug not in old]
+    removed = [slug for slug in old if slug not in new]
+    changed = [slug for slug in new if slug in old and new[slug] != old[slug]]
+    unchanged = [slug for slug in new if slug in old and new[slug] == old[slug]]
+
+    if not (added or removed or changed):
+        _ok(f"up to date. {term.bold(str(len(rows)))} models, no change")
+        return
+
+    native = 0
+    for slug in added:
+        mapped = new[slug].get("behavesAs")
+        note = term.dim(f"  (as {mapped})") if mapped else term.dim("  (native)")
+        if not mapped:
+            native += 1
+        print(f"   {term.green('+')} {slug}{note}")
+    for slug in removed:
+        print(f"   {term.red('-')} {term.dim(slug)}")
+    for slug in changed:
+        print(f"   {term.yellow('~')} {slug}")
+
+    print(term.rule())
+    parts = []
+    if added:
+        parts.append(term.green(f"{len(added)} added"))
+    if removed:
+        parts.append(term.red(f"{len(removed)} removed"))
+    if changed:
+        parts.append(term.yellow(f"{len(changed)} changed"))
+    parts.append(term.dim(f"{len(unchanged)} unchanged"))
+    print("   " + "   ".join(parts))
+    if native:
+        print(term.dim(f"   {native} models keep their native Claude handling"))
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="xsync",
@@ -549,6 +739,23 @@ def build_parser() -> argparse.ArgumentParser:
     )
     codex.set_defaults(func=cmd_codex)
 
+    claude = sub.add_parser(
+        "claude", help="sync a profile into the Claude Code model picker"
+    )
+    claude.add_argument("--profile", help="use this profile for one run")
+    claude.add_argument("--dry-run", action="store_true", help="show the difference only")
+    claude.add_argument(
+        "--init", action="store_true", help="point Claude Code at the endpoint"
+    )
+    claude.add_argument(
+        "--reset", action="store_true", help="remove everything xsync wrote"
+    )
+    claude.add_argument("--force", action="store_true", help="reset without a state file")
+    claude.add_argument(
+        "--yes", action="store_true", help="answer yes to the reset question"
+    )
+    claude.set_defaults(func=cmd_claude)
+
     help_command = sub.add_parser("help", help="show this help, or the help of a command")
     help_command.add_argument("topic", nargs="?", help="a command name")
     help_command.set_defaults(func=cmd_help)
@@ -564,6 +771,6 @@ def main(argv: list[str] | None = None) -> int:
         return EXIT_OK
     try:
         return args.func(args)
-    except (ProfileError, ConfigError) as error:
+    except (ProfileError, ConfigError, ClaudeConfigError) as error:
         print(f"error: {error}", file=sys.stderr)
         return EXIT_ERROR

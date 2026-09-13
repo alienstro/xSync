@@ -67,9 +67,51 @@ Run this command again when the endpoint changes.
 | `xsync codex --reset` | Remove everything that xSync wrote. |
 | `xsync codex --reset --force` | Reset when no state file exists. It asks first. |
 | `xsync codex --reset --force --yes` | Reset with no question. Use this in a script. |
+| `xsync claude` | Sync the active profile into the Claude Code model picker. |
+| `xsync claude --init` | Point Claude Code at the endpoint of the profile. |
+| `xsync claude --dry-run` | Show the difference. Write nothing. |
+| `xsync claude --reset` | Remove everything that xSync wrote. |
+| `xsync help` | Show the help. `xsync help codex` explains one command. |
 
 Exit codes: `0` for success, `1` for an error, `2` when the endpoint does not
 answer.
+
+## Claude Code
+
+    xsync claude --init
+    xsync claude
+
+Claude Code holds no catalog file. It reads the rows of the `/model`
+picker from `modelPicker.options` in `~/.claude/settings.json`, and it reads
+the endpoint from the `env` block of the same file. `xsync claude` writes
+those two keys and nothing else.
+
+The endpoint must answer the Anthropic API at `POST /v1/messages`. An
+endpoint that answers only the OpenAI API works with Codex, not with Claude
+Code.
+
+### The map to a known model
+
+Claude Code refuses a model that it does not know:
+
+    "cmc/deepseek/deepseek-v4-pro" isn't described by this version's model
+    catalog; update Claude Code, or map it with behavesAs on a modelPicker row
+
+Therefore each row carries `behavesAs`: the id of a model that Claude Code
+knows. The prompt profile, the capability defaults, and the effort defaults
+of that model then apply. The model id that Claude Code sends does not
+change.
+
+A model name that already holds a known model id, such as
+`ed3n/claude-sonnet-5`, gets no `behavesAs`. It keeps its native handling.
+
+Edit `adapters/rules/claude.toml` to change a map.
+
+### The built-in models stay
+
+xSync sets `replaceBuiltInOptions` to `false`. The built-in models stay at
+the top of the picker, and the router models come after them. A router that
+stops therefore leaves a working picker.
 
 ## Switch between endpoints
 

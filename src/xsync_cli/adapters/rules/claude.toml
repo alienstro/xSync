@@ -1,0 +1,51 @@
+# Claude Code refuses a model that it does not know. A picker row gives
+# it `behavesAs`: the id of a model that Claude Code knows. The prompt
+# profile, the capability defaults, and the effort defaults of that
+# model then apply.
+#
+# A model name that already holds a known model id needs no behavesAs.
+# The list `native_ids` holds those known ids.
+#
+# The layers apply in this order. A later layer wins:
+#   1. defaults
+#   2. prefix.<first slug segment>
+#   3. name.<last slug segment>      matches on every router
+#   4. slug."<exact slug>"           matches one router only
+
+[defaults]
+behaves_as = "claude-opus-4-8"
+description_template = "{slug}"
+
+# A model name that holds one of these ids keeps its native handling.
+native_ids = [
+  "claude-opus-5",
+  "claude-opus-4-8",
+  "claude-opus-4-7",
+  "claude-opus-4-6",
+  "claude-opus-4-5",
+  "claude-opus-4-1",
+  "claude-opus-4",
+  "claude-sonnet-5",
+  "claude-sonnet-4-6",
+  "claude-sonnet-4-5",
+  "claude-sonnet-4",
+  "claude-sonnet-3-7",
+  "claude-haiku-4-5",
+  "claude-haiku-4",
+  "claude-haiku-3-5",
+  "claude-fable-5-1",
+  "claude-fable-5",
+]
+
+# A small or fast model works better with the handling of a small model.
+[name."deepseek-v4.1-flash"]
+behaves_as = "claude-haiku-4-5"
+
+[name."deepseek-v4-flash"]
+behaves_as = "claude-haiku-4-5"
+
+[name."step-3.5-flash"]
+behaves_as = "claude-haiku-4-5"
+
+[name."gpt-5.4-mini"]
+behaves_as = "claude-sonnet-4-6"
