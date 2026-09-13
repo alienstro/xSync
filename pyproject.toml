@@ -20,9 +20,5 @@ dev = ["pytest>=8.0"]
 [tool.hatch.build.targets.wheel]
 packages = ["src/xsync_cli"]
 
-[tool.hatch.build.targets.wheel.force-include]
-"src/xsync_cli/adapters/rules" = "xsync_cli/adapters/rules"
-"src/xsync_cli/adapters/prompts" = "xsync_cli/adapters/prompts"
-
 [tool.pytest.ini_options]
 testpaths = ["tests"]
