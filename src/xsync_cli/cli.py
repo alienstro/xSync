@@ -493,6 +493,29 @@ exit codes:
 """
 
 
+def cmd_help(args: argparse.Namespace) -> int:
+    """Show the help of the tool, or the help of one command."""
+    parser = build_parser()
+    if not args.topic:
+        parser.print_help()
+        return EXIT_OK
+
+    actions = [
+        action
+        for action in parser._subparsers._group_actions  # noqa: SLF001
+        if isinstance(action, argparse._SubParsersAction)  # noqa: SLF001
+    ]
+    for action in actions:
+        child = action.choices.get(args.topic)
+        if child is not None:
+            child.print_help()
+            return EXIT_OK
+
+    known = ", ".join(sorted(actions[0].choices)) if actions else ""
+    _fail(f"unknown command {args.topic!r}. Known commands: {known}")
+    return EXIT_ERROR
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="xsync",
@@ -525,6 +548,10 @@ def build_parser() -> argparse.ArgumentParser:
         "--yes", action="store_true", help="answer yes to the reset question"
     )
     codex.set_defaults(func=cmd_codex)
+
+    help_command = sub.add_parser("help", help="show this help, or the help of a command")
+    help_command.add_argument("topic", nargs="?", help="a command name")
+    help_command.set_defaults(func=cmd_help)
 
     return parser
 

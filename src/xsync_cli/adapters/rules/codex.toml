@@ -8,7 +8,12 @@
 # The layers apply in this order. A later layer wins:
 #   1. defaults
 #   2. prefix.<first slug segment>
-#   3. slug."<exact slug>"
+#   3. name.<last slug segment>      matches on every router
+#   4. slug."<exact slug>"           matches one router only
+#
+# Prefer a name rule. A router gives the same model a different slug.
+# The model gpt-5.5 is "cx/gpt-5.5" on one router and "openai/gpt-5.5"
+# on another one. A name rule matches both.
 
 [defaults]
 base_instructions_file = "generic-codex.md"
@@ -41,9 +46,10 @@ limit = 10000
 priority = 10
 
 # The two OpenAI models carry their own prompts and their own speed
-# tiers. The values come from the working catalog.
+# tiers. The values come from the working catalog. A name rule matches
+# the model on every router.
 
-[slug."cx/gpt-5.5"]
+[name."gpt-5.5"]
 base_instructions_file = "gpt-5.5.md"
 model_messages_file = "gpt-5.5.messages.json"
 priority = 18
@@ -54,7 +60,7 @@ service_tiers = [
   { id = "priority", name = "Fast", description = "1.5x speed, increased usage" },
 ]
 
-[slug."cx/gpt-5.4"]
+[name."gpt-5.4"]
 base_instructions_file = "gpt-5.4.md"
 model_messages_file = "gpt-5.4.messages.json"
 priority = 14

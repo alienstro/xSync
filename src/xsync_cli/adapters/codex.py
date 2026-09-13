@@ -58,16 +58,24 @@ def _read_prompt(name: str) -> str:
 
 @dataclass(frozen=True, slots=True)
 class Rules:
-    """The three rule layers."""
+    """The four rule layers.
+
+    A router gives the same model a different slug. The model gpt-5.5
+    is `cx/gpt-5.5` on one router and `openai/gpt-5.5` on another one.
+    Therefore a name rule matches the last slug segment, and it works
+    on every router. A slug rule still wins over a name rule.
+    """
 
     defaults: dict[str, Any]
     prefixes: dict[str, dict[str, Any]]
+    names: dict[str, dict[str, Any]]
     slugs: dict[str, dict[str, Any]]
 
     def for_model(self, model: Model) -> dict[str, Any]:
         """The merged rule values for one model."""
         merged: dict[str, Any] = dict(self.defaults)
-        merged.update(self.prefixes.get(model.prefix, {}))
+        merged.update(self.prefixes.get(model.prefix.lower(), {}))
+        merged.update(self.names.get(model.leaf_name.lower(), {}))
         merged.update(self.slugs.get(model.slug, {}))
         return merged
 
@@ -83,7 +91,8 @@ def load_rules(path: Path | None = None) -> Rules:
     data = tomllib.loads(text)
     return Rules(
         defaults=dict(data.get("defaults", {})),
-        prefixes={k: dict(v) for k, v in (data.get("prefix") or {}).items()},
+        prefixes={k.lower(): dict(v) for k, v in (data.get("prefix") or {}).items()},
+        names={k.lower(): dict(v) for k, v in (data.get("name") or {}).items()},
         slugs={k: dict(v) for k, v in (data.get("slug") or {}).items()},
     )
 

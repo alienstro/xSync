@@ -212,3 +212,32 @@ def test_only_the_known_fields_may_hold_a_null():
 
 def test_a_plain_model_still_reports_no_search():
     assert render_entry(model(search=False), RULES)["supports_search_tool"] is False
+
+
+def test_a_name_rule_matches_any_provider_prefix():
+    """The same model has a different slug on every router."""
+    for slug in (
+        "cx/gpt-5.5",
+        "openai/gpt-5.5",
+        "gpt-5.5",
+        "some-router/openai/gpt-5.5",
+    ):
+        entry = render_entry(model(slug=slug), RULES)
+        assert len(entry["base_instructions"]) > 20000, slug
+        assert entry["additional_speed_tiers"] == ["fast"], slug
+
+
+def test_a_name_rule_ignores_the_letter_case():
+    assert len(render_entry(model(slug="OpenAI/GPT-5.5"), RULES)["base_instructions"]) > 20000
+
+
+def test_a_name_rule_does_not_match_a_different_model():
+    entry = render_entry(model(slug="openai/gpt-5.5-mini"), RULES)
+    assert entry["additional_speed_tiers"] == []
+
+
+def test_an_exact_slug_rule_still_wins_over_a_name_rule():
+    rules = load_rules()
+    rules.names["gpt-5.5"] = {"priority": 1}
+    rules.slugs["cx/gpt-5.5"] = {"priority": 99}
+    assert rules.for_model(model(slug="cx/gpt-5.5"))["priority"] == 99

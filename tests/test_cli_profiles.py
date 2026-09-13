@@ -174,3 +174,23 @@ def test_setup_takes_the_wire_api_from_an_existing_provider(
 
     assert cli.main(["setup"]) == 0
     assert 'wire_api = "responses"' in store_path.read_text()
+
+
+def test_the_help_command_shows_the_same_help(capsys):
+    assert cli.main(["help"]) == 0
+    out = capsys.readouterr().out
+    for name in ("setup", "list", "use", "remove", "codex"):
+        assert name in out
+    assert "profiles.toml" in out
+
+
+def test_the_help_command_can_explain_one_command(capsys):
+    assert cli.main(["help", "codex"]) == 0
+    out = capsys.readouterr().out
+    assert "--dry-run" in out
+    assert "--reset" in out
+
+
+def test_the_help_of_an_unknown_command_fails(capsys):
+    assert cli.main(["help", "nope"]) == 1
+    assert "nope" in capsys.readouterr().err
