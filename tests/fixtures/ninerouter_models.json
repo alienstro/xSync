@@ -1,0 +1,35 @@
+{
+  "object": "list",
+  "data": [
+    {
+      "id": "cmc/deepseek/deepseek-v4-pro",
+      "object": "model",
+      "owned_by": "cmc",
+      "capabilities": {
+        "vision": false,
+        "reasoning": true,
+        "tools": true,
+        "search": false,
+        "contextWindow": 1000000,
+        "maxOutput": 384000
+      },
+      "context_length": 1000000,
+      "max_completion_tokens": 384000
+    },
+    {
+      "id": "cx/gpt-5.5",
+      "object": "model",
+      "owned_by": "cx",
+      "capabilities": {
+        "vision": true,
+        "reasoning": true,
+        "tools": true,
+        "search": true,
+        "contextWindow": 272000,
+        "maxOutput": 128000
+      },
+      "context_length": 272000,
+      "max_completion_tokens": 128000
+    }
+  ]
+}
