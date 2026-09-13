@@ -116,7 +116,7 @@ A glob pattern selects a model by name. The sign `*` means any characters.
 | Rule | Effect |
 |---|---|
 | `include = []` | Keep every model. This is the default. |
-| `include = ["cx/*", "ed3n/*"]` | Keep only the models of those two providers. |
+| `include = ["openai/*", "anthropic/*"]` | Keep only the models of those two providers. |
 | `exclude = ["*embedding*"]` | Drop every model with `embedding` in the name. |
 | `exclude = ["*-image-*", "*-tts-*"]` | Drop the image models and the speech models. |
 

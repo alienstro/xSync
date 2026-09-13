@@ -125,7 +125,8 @@ def cmd_setup(args: argparse.Namespace) -> int:
         )
     )
     include = _ask_list(
-        "Include only these", hint="for example cx/*, ed3n/*    (empty keeps all)"
+        "Include only these",
+        hint="for example openai/*, *-mini    (empty keeps every model)",
     )
     exclude = _ask_list(
         "Exclude these", hint="for example *embedding*, *-image-*"
