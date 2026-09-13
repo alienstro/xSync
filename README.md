@@ -38,19 +38,25 @@ The last question asks for the wire API:
 A wrong value breaks every request. Ask the operator of the endpoint when
 you do not know.
 
-### 2. Connect Codex to the endpoint
-
-    xsync codex --init
-
-The command adds `[model_providers.<profile>]` to `~/.codex/config.toml` and
-points `model_catalog_json` at the catalog of the profile. Run this one time
-for each endpoint.
-
-### 3. Sync
+### 2. Open a harness
 
     xsync codex
+    xsync claude
 
-Run this command again when the endpoint changes.
+The command builds a home for the profile, then starts the harness in that
+home. The real Codex and the real Claude Code of the user stay as they are.
+
+Arguments after `--` go to the harness:
+
+    xsync claude -- --model cmc/deepseek/deepseek-v4-pro
+
+### 3. Or write the real harness
+
+    xsync codex apply
+    xsync claude apply
+
+The `apply` verb changes the real home of the user. Read **Safety** before
+you use it.
 
 ## Commands
 
@@ -60,18 +66,38 @@ Run this command again when the endpoint changes.
 | `xsync list` | Show the profiles. The active profile has a star. |
 | `xsync use <name>` | Set the active profile. |
 | `xsync remove <name>` | Delete a profile. |
-| `xsync codex` | Sync the active profile into the Codex catalog. |
-| `xsync codex --dry-run` | Show the difference. Write nothing. |
-| `xsync codex --profile <name>` | Use another profile for one run. |
-| `xsync codex --init` | Connect Codex to the endpoint of the profile. |
-| `xsync codex --reset` | Remove everything that xSync wrote. |
-| `xsync codex --reset --force` | Reset when no state file exists. It asks first. |
-| `xsync codex --reset --force --yes` | Reset with no question. Use this in a script. |
-| `xsync claude` | Sync the active profile into the Claude Code model picker. |
-| `xsync claude --init` | Point Claude Code at the endpoint of the profile. |
-| `xsync claude --dry-run` | Show the difference. Write nothing. |
-| `xsync claude --reset` | Remove everything that xSync wrote. |
 | `xsync help` | Show the help. `xsync help codex` explains one command. |
+| `xsync codex` | Open a Codex on the active profile, in its own home. |
+| `xsync claude` | Open a Claude Code the same way. |
+| `xsync codex -- <args>` | The arguments after `--` go to the harness. |
+| `xsync codex apply` | Write the real Codex of the user. |
+| `xsync claude apply` | Write the real Claude Code of the user. |
+| `xsync <harness> apply --dry-run` | Show the difference. Write nothing. |
+| `xsync <harness> apply --reset` | Remove everything that xSync wrote. |
+| `xsync <harness> apply --reset --force --yes` | Reset with no question. |
+| `xsync <harness> --profile <name>` | Use another profile for one run. |
+
+## The isolated home
+
+`xsync codex` and `xsync claude` do not change the settings of the user. Each
+one builds a home under `~/.config/xsync/homes/<profile>/`, and then starts
+the harness with `CODEX_HOME` or with `CLAUDE_CONFIG_DIR` set to that home.
+
+The home starts as a copy of the real settings file, so the hooks of the
+user and the trusted projects of the user stay. xSync then points the copy at
+the endpoint of the profile.
+
+The home shares the work of the user through a symbolic link:
+
+| Harness | Shared |
+|---|---|
+| Codex | `skills`, `plugins`, `marketplaces`, `memories`, `AGENTS.md` |
+| Claude Code | `agents`, `skills`, `plugins`, `hooks`, `commands`, `CLAUDE.md` |
+
+A session, a cache, and a log stay inside the isolated home. They never mix
+with the real home.
+
+Delete a home at any time. The next command builds it again.
 
 Exit codes: `0` for success, `1` for an error, `2` when the endpoint does not
 answer.

@@ -10,7 +10,9 @@ from getpass import getpass
 from pathlib import Path
 
 from xsync_cli.adapters.codex import load_rules, render_catalog
+from xsync_cli.adapters.isolated import prepare_claude_home, prepare_codex_home
 from xsync_cli.core import term
+from xsync_cli.core.homes import HomeError, home_for, launch
 from xsync_cli.adapters.claude import load_rules as load_claude_rules
 from xsync_cli.adapters.claude import render_rows
 from xsync_cli.adapters import claude_config
@@ -382,8 +384,8 @@ def _do_reset(
     return EXIT_OK
 
 
-def cmd_codex(args: argparse.Namespace) -> int:
-    """Sync a profile into the Codex catalog."""
+def _codex_apply(args: argparse.Namespace) -> int:
+    """Write the real Codex home."""
     store = open_store()
     codex_home = default_codex_home()
     config_path = codex_home / "config.toml"
@@ -491,15 +493,20 @@ examples:
   xsync setup                      make a profile, and read the model list
   xsync list                       show the profiles. The active one has a star
   xsync use openrouter             set the active profile
-  xsync codex --init               connect Codex to the endpoint of the profile
-  xsync codex --dry-run            show the difference. Write nothing
-  xsync codex                      sync the models into the Codex catalog
-  xsync codex --reset              remove everything that xsync wrote
+
+  xsync codex                      open a Codex on the profile, in its own home
+  xsync claude                     open a Claude Code the same way
+  xsync claude -- --model a/b      arguments after -- go to the harness
+
+  xsync codex apply                write the real Codex of the user
+  xsync claude apply               write the real Claude Code of the user
+  xsync codex apply --dry-run      show the difference. Write nothing
+  xsync codex apply --reset        remove everything that xsync wrote
 
 files:
   ~/.config/xsync/profiles.toml    the profiles. `xsync setup` writes this file
-  ~/.codex/<profile>-models.json   the Codex catalog that `xsync codex` writes
-  ~/.codex/config.toml             only `--init` and `--reset` write this file
+  ~/.config/xsync/homes/           one home for each profile and each harness
+  ~/.codex, ~/.claude              only `apply` writes these
 
 exit codes:
   0 success    1 error    2 the endpoint does not answer
@@ -569,8 +576,8 @@ def _claude_reset(claude_home: Path, profile_name: str, force: bool, yes: bool) 
     return EXIT_OK
 
 
-def cmd_claude(args: argparse.Namespace) -> int:
-    """Sync a profile into the Claude Code model picker."""
+def _claude_apply(args: argparse.Namespace) -> int:
+    """Write the real Claude Code home."""
     store = open_store()
     claude_home = default_claude_home()
     settings_file = settings_path_for(claude_home)
@@ -706,6 +713,130 @@ def _print_claude_report(rows, old_rows, profile: Profile) -> None:
         print(term.dim(f"   {native} models keep their native Claude handling"))
 
 
+def _resolve_profile(args: argparse.Namespace):
+    """The profile of this run, or None after an error."""
+    store = open_store()
+    try:
+        return store.get(args.profile) if args.profile else store.active_profile()
+    except ProfileError as error:
+        _fail(str(error))
+        return None
+
+
+def _models_for(profile) -> tuple[list | None, int]:
+    """The models of the endpoint, after the filters."""
+    try:
+        api_key = profile.resolve_key(os.environ)
+        models = fetch_models(profile.base_url, api_key)
+    except EndpointUnreachable as error:
+        _fail(str(error))
+        return None, EXIT_UNREACHABLE
+    except (SourceError, ProfileError) as error:
+        _fail(str(error))
+        return None, EXIT_ERROR
+    return apply_filters(models, profile.include, profile.exclude), EXIT_OK
+
+
+def _extra_args(args: argparse.Namespace) -> list[str]:
+    """The arguments that go to the harness."""
+    extra = list(getattr(args, "extra", None) or [])
+    return extra[1:] if extra and extra[0] == "--" else extra
+
+
+def _open_harness(args: argparse.Namespace, harness: str) -> int:
+    """Build the isolated home, then start the harness in it."""
+    profile = _resolve_profile(args)
+    if profile is None:
+        return EXIT_ERROR
+
+    models, code = _models_for(profile)
+    if models is None:
+        return code
+
+    try:
+        home = home_for(profile.name, harness)
+    except HomeError as error:
+        _fail(str(error))
+        return EXIT_ERROR
+
+    try:
+        api_key = profile.resolve_key(os.environ)
+    except ProfileError as error:
+        _fail(str(error))
+        return EXIT_ERROR
+
+    if harness == "codex":
+        prepare_codex_home(home, default_codex_home(), profile, api_key, models)
+        command, variable = "codex", "CODEX_HOME"
+    else:
+        prepare_claude_home(home, default_claude_home(), profile, api_key, models)
+        command, variable = "claude", "CLAUDE_CONFIG_DIR"
+
+    print(term.heading(f"{command} · {profile.name}"))
+    print(term.dim(f"   {profile.base_url}"))
+    print(term.dim(f"   home: {home}"))
+    _ok(f"{term.bold(str(len(models)))} models ready. Your real {command} is untouched.")
+    print()
+
+    try:
+        launch(command, variable, str(home), _extra_args(args))
+    except HomeError as error:
+        _fail(str(error))
+        return EXIT_ERROR
+    return EXIT_OK
+
+
+def cmd_codex(args: argparse.Namespace) -> int:
+    """Open an isolated Codex, or write the real one."""
+    if args.action == "apply":
+        # `apply` writes the real home. It therefore wires the endpoint.
+        # A dry run writes nothing, so it never wires anything.
+        if not args.reset and not args.dry_run:
+            args.init = True
+        return _codex_apply(args)
+    return _open_harness(args, "codex")
+
+
+def cmd_claude(args: argparse.Namespace) -> int:
+    """Open an isolated Claude Code, or write the real one."""
+    if args.action == "apply":
+        # `apply` writes the real home. It therefore wires the endpoint.
+        # A dry run writes nothing, so it never wires anything.
+        if not args.reset and not args.dry_run:
+            args.init = True
+        return _claude_apply(args)
+    return _open_harness(args, "claude")
+
+
+def _add_harness_arguments(parser: argparse.ArgumentParser) -> None:
+    """The arguments that both harness commands share."""
+    parser.add_argument(
+        "action",
+        nargs="?",
+        choices=["apply"],
+        help="apply writes the real home of the harness",
+    )
+    parser.add_argument("--profile", help="use this profile for one run")
+    parser.add_argument(
+        "--dry-run", action="store_true", help="apply: show the difference only"
+    )
+    parser.add_argument(
+        "--init",
+        action="store_true",
+        help="apply: point the harness at the endpoint (implied by apply)",
+    )
+    parser.add_argument(
+        "--reset", action="store_true", help="apply: remove everything xsync wrote"
+    )
+    parser.add_argument(
+        "--force", action="store_true", help="apply: reset without a state file"
+    )
+    parser.add_argument(
+        "--yes", action="store_true", help="apply: answer yes to the reset question"
+    )
+    parser.set_defaults(extra=[])
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="xsync",
@@ -726,34 +857,28 @@ def build_parser() -> argparse.ArgumentParser:
     remove.add_argument("name")
     remove.set_defaults(func=cmd_remove)
 
-    codex = sub.add_parser("codex", help="sync a profile into the Codex catalog")
-    codex.add_argument("--profile", help="use this profile for one run")
-    codex.add_argument("--dry-run", action="store_true", help="show the difference only")
-    codex.add_argument("--init", action="store_true", help="wire Codex to the endpoint")
-    codex.add_argument(
-        "--reset", action="store_true", help="remove everything xSync wrote"
+    codex = sub.add_parser(
+        "codex",
+        help="open an isolated Codex on the active profile",
+        description=(
+            "Open a Codex that talks to the endpoint of the profile. The real "
+            "Codex of the user stays as it is. Add `apply` to write the real "
+            "Codex instead."
+        ),
     )
-    codex.add_argument("--force", action="store_true", help="reset without a state file")
-    codex.add_argument(
-        "--yes", action="store_true", help="answer yes to the reset question"
-    )
+    _add_harness_arguments(codex)
     codex.set_defaults(func=cmd_codex)
 
     claude = sub.add_parser(
-        "claude", help="sync a profile into the Claude Code model picker"
+        "claude",
+        help="open an isolated Claude Code on the active profile",
+        description=(
+            "Open a Claude Code that talks to the endpoint of the profile. The "
+            "real Claude Code of the user stays as it is. Add `apply` to write "
+            "the real Claude Code instead."
+        ),
     )
-    claude.add_argument("--profile", help="use this profile for one run")
-    claude.add_argument("--dry-run", action="store_true", help="show the difference only")
-    claude.add_argument(
-        "--init", action="store_true", help="point Claude Code at the endpoint"
-    )
-    claude.add_argument(
-        "--reset", action="store_true", help="remove everything xsync wrote"
-    )
-    claude.add_argument("--force", action="store_true", help="reset without a state file")
-    claude.add_argument(
-        "--yes", action="store_true", help="answer yes to the reset question"
-    )
+    _add_harness_arguments(claude)
     claude.set_defaults(func=cmd_claude)
 
     help_command = sub.add_parser("help", help="show this help, or the help of a command")
@@ -763,9 +888,23 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _split_extra(argv: list[str]) -> tuple[list[str], list[str]]:
+    """Cut the argument list at the first `--`.
+
+    argparse reads the first part. The harness gets the second part.
+    """
+    if "--" not in argv:
+        return argv, []
+    cut = argv.index("--")
+    return argv[:cut], argv[cut + 1 :]
+
+
 def main(argv: list[str] | None = None) -> int:
+    raw = list(sys.argv[1:] if argv is None else argv)
+    mine, theirs = _split_extra(raw)
     parser = build_parser()
-    args = parser.parse_args(argv)
+    args = parser.parse_args(mine)
+    args.extra = theirs
     if not getattr(args, "command", None):
         parser.print_help()
         return EXIT_OK
