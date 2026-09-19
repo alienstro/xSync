@@ -9,13 +9,23 @@ import sys
 from getpass import getpass
 from pathlib import Path
 
+from xsync_cli.adapters import claude_config, opencode_config, pi_config
 from xsync_cli.adapters.codex import load_rules, render_catalog
-from xsync_cli.adapters.isolated import prepare_claude_home, prepare_codex_home
+from xsync_cli.adapters.isolated import (
+    prepare_claude_home,
+    prepare_codex_home,
+    prepare_opencode_home,
+    prepare_pi_family_home,
+)
 from xsync_cli.core import term
-from xsync_cli.core.homes import HomeError, home_for, launch
+from xsync_cli.core.homes import (
+    HomeError,
+    home_for,
+    launch,
+    launch_environment,
+)
 from xsync_cli.adapters.claude import load_rules as load_claude_rules
 from xsync_cli.adapters.claude import render_rows
-from xsync_cli.adapters import claude_config
 from xsync_cli.adapters.claude_config import (
     ClaudeConfigError,
     check_endpoint_match,
@@ -44,6 +54,7 @@ from xsync_cli.core.atomic import write_json_atomic
 from xsync_cli.core.diff import diff_catalogs
 from xsync_cli.core.filters import apply_filters
 from xsync_cli.core.profiles import (
+    ENDPOINT_TYPES,
     WIRE_APIS,
     Profile,
     ProfileError,
@@ -106,6 +117,21 @@ def _fail(text: str) -> None:
     print(f"{term.red('✗')} {text}", file=sys.stderr)
 
 
+def _endpoint_type(name: str, base_url: str, requested: str | None) -> str:
+    """Select the endpoint compatibility mode."""
+    if requested:
+        return requested
+    compact_name = "".join(
+        character for character in name.lower() if character.isalnum()
+    )
+    if "cliproxy" in compact_name:
+        return "cliproxy"
+    address = base_url.rstrip("/")
+    if address.endswith(":8317") or ":8317/" in address:
+        return "cliproxy"
+    return "generic"
+
+
 def cmd_setup(args: argparse.Namespace) -> int:
     """Make a profile."""
     store = open_store()
@@ -126,6 +152,9 @@ def cmd_setup(args: argparse.Namespace) -> int:
     if not base_url:
         _fail("the base URL cannot be empty.")
         return EXIT_ERROR
+    endpoint_type = _endpoint_type(name, base_url, args.endpoint_type)
+    if endpoint_type == "cliproxy":
+        print(f"   {term.dim('endpoint type:')} CLIProxy")
 
     api_key = _ask_secret(
         "API key", hint="the terminal shows nothing. Press Enter when there is no key"
@@ -182,12 +211,15 @@ def cmd_setup(args: argparse.Namespace) -> int:
                 "   A wrong value breaks every request."
             )
         )
-    wire_api = _ask(f"Wire API ({' or '.join(WIRE_APIS)})", known or "chat")
+    wire_default = known or ("responses" if endpoint_type == "cliproxy" else "chat")
+    wire_api = _ask(f"Wire API ({' or '.join(WIRE_APIS)})", wire_default)
     if known and wire_api != known:
         _warn(
             f"Codex uses {known!r} for this URL. The answer {wire_api!r} "
             "disagrees with it."
         )
+    if endpoint_type == "cliproxy" and wire_api != "responses":
+        _warn("CLIProxy needs the responses wire API for Codex.")
 
     try:
         profile = Profile(
@@ -198,6 +230,7 @@ def cmd_setup(args: argparse.Namespace) -> int:
             wire_api=wire_api,
             include=include,
             exclude=exclude,
+            endpoint_type=endpoint_type,
         )
     except ProfileError as error:
         _fail(str(error))
@@ -211,9 +244,11 @@ def cmd_setup(args: argparse.Namespace) -> int:
     _print_profile(profile, active=store.active == profile.name)
     print(term.dim(f"\n   file: {store.path}"))
     print(term.heading("Next"))
-    print(f"   {term.bold('xsync codex --init')}     connect Codex to this endpoint")
-    print(f"   {term.bold('xsync codex --dry-run')}  see what would change")
-    print(f"   {term.bold('xsync codex')}            write the catalog\n")
+    print(f"   {term.bold('xsync codex')}      open Codex on this endpoint")
+    print(f"   {term.bold('xsync claude')}     open Claude Code on this endpoint")
+    print(f"   {term.bold('xsync opencode')}   open OpenCode on this endpoint")
+    print(f"   {term.bold('xsync pi')}         open Pi on this endpoint")
+    print(f"   {term.bold('xsync omp')}        open OMP on this endpoint\n")
     return EXIT_OK
 
 
@@ -264,6 +299,7 @@ def _print_profile(profile: Profile, active: bool) -> None:
             if profile.api_key
             else (f"${profile.api_key_env}" if profile.api_key_env else "(none)")),
         ("wire api", profile.wire_api),
+        ("type", profile.endpoint_type),
     ]
     if profile.include:
         rows.append(("include", ", ".join(profile.include)))
@@ -503,6 +539,9 @@ HELP_GROUPS = (
         (
             ("codex", "open a Codex on the profile, in its own home"),
             ("claude", "open a Claude Code the same way"),
+            ("opencode", "open an OpenCode the same way"),
+            ("pi", "open a Pi the same way"),
+            ("omp", "open an OMP the same way"),
             ("<harness> apply", "write the real harness of the user"),
         ),
     ),
@@ -527,6 +566,8 @@ HELP_FILES = (
     ("~/.config/xsync/profiles.toml", "the profiles"),
     ("~/.config/xsync/homes/", "one home for each profile and harness"),
     ("~/.codex, ~/.claude", "only `apply` writes these"),
+    ("~/.config/opencode", "only `apply` writes this"),
+    ("~/.pi/agent, ~/.omp/agent", "only `apply` writes these"),
 )
 
 HELP_EXIT = (
@@ -548,7 +589,7 @@ def _version() -> str:
 
 def render_help() -> str:
     """The help page of the tool."""
-    width = 30
+    width = 43
     lines: list[str] = []
 
     lines.append("")
@@ -789,6 +830,318 @@ def _print_claude_report(rows, old_rows, profile: Profile) -> None:
         print(term.dim(f"   {native} models keep their native Claude handling"))
 
 
+def _opencode_reset(
+    opencode_home: Path, profile_name: str, force: bool, yes: bool
+) -> int:
+    """Remove the provider that xSync wrote into OpenCode."""
+    state_path = opencode_home / opencode_config.STATE_FILENAME
+    state = opencode_config.read_state(state_path)
+
+    if state is None:
+        if not force:
+            print(term.heading("Reset without a state file"))
+            print(term.dim("   xsync did not record this setup. It would remove:"))
+            print(f"   {term.red('-')} provider.{profile_name}")
+            _fail("add --force to continue.")
+            return EXIT_ERROR
+        print(term.heading("Reset without a state file"))
+        print(f"   {term.red('-')} provider.{profile_name}")
+        if not yes and not _confirm(
+            f"Remove the OpenCode setup of {profile_name!r}?"
+        ):
+            _fail("stopped. Nothing was removed.")
+            return EXIT_ERROR
+        state = opencode_config.State(
+            profile=profile_name,
+            provider_id=profile_name,
+        )
+
+    removed = opencode_config.reset_provider(
+        opencode_config.config_path_for(opencode_home), state
+    )
+    opencode_config.clear_state(state_path)
+    print(term.heading("Reset"))
+    print(term.rule())
+    for name in removed:
+        print(f"   {term.red('-')} {name}")
+    print(term.rule())
+    _ok("OpenCode is back at its own defaults.")
+    print()
+    return EXIT_OK
+
+
+def _opencode_apply(args: argparse.Namespace) -> int:
+    """Write the real OpenCode configuration."""
+    profile = _resolve_profile(args)
+    if profile is None:
+        return EXIT_ERROR
+
+    opencode_home = opencode_config.default_opencode_home()
+    config_path = opencode_config.config_path_for(opencode_home)
+    state_path = opencode_home / opencode_config.STATE_FILENAME
+
+    if args.reset:
+        try:
+            return _opencode_reset(
+                opencode_home, profile.name, args.force, args.yes
+            )
+        except opencode_config.OpenCodeConfigError as error:
+            _fail(str(error))
+            return EXIT_ERROR
+
+    models, code = _models_for(profile)
+    if models is None:
+        return code
+
+    try:
+        api_key = profile.resolve_key(os.environ)
+        config = opencode_config.read_config(config_path)
+    except (opencode_config.OpenCodeConfigError, ProfileError) as error:
+        _fail(str(error))
+        return EXIT_ERROR
+
+    provider = opencode_config.render_provider(profile, api_key, models)
+    current = opencode_config.current_provider(config, profile.name)
+    _print_opencode_report(provider, current, profile)
+
+    if args.dry_run:
+        message = opencode_config.check_provider_match(config, profile)
+        if message:
+            print()
+            _warn(message)
+        print(term.dim("   no file written (--dry-run)\n"))
+        return EXIT_OK
+
+    try:
+        state = opencode_config.write_provider(
+            config_path, profile, api_key, models
+        )
+        opencode_config.write_state(state_path, state)
+    except opencode_config.OpenCodeConfigError as error:
+        _fail(str(error))
+        return EXIT_ERROR
+
+    _ok(
+        f"wrote {term.bold(str(len(models)))} models to "
+        f"{term.dim(str(config_path))}"
+    )
+    print(term.dim("   run /models in OpenCode to pick one\n"))
+    return EXIT_OK
+
+
+def _print_opencode_report(
+    provider: dict, current: dict, profile: Profile
+) -> None:
+    """Show the difference of one OpenCode sync."""
+    print(term.heading(f"Sync {profile.name} → OpenCode"))
+    print(term.dim(f"   {profile.base_url}"))
+    print(term.rule())
+
+    old = current.get("models") if isinstance(current.get("models"), dict) else {}
+    new = provider["models"]
+    added = [slug for slug in new if slug not in old]
+    removed = [slug for slug in old if slug not in new]
+    changed = [slug for slug in new if slug in old and new[slug] != old[slug]]
+    unchanged = [slug for slug in new if slug in old and new[slug] == old[slug]]
+
+    if not (added or removed or changed):
+        _ok(f"up to date. {term.bold(str(len(new)))} models, no change")
+        return
+
+    for slug in added:
+        print(f"   {term.green('+')} {slug}")
+    for slug in removed:
+        print(f"   {term.red('-')} {term.dim(slug)}")
+    for slug in changed:
+        print(f"   {term.yellow('~')} {slug}")
+
+    print(term.rule())
+    parts = []
+    if added:
+        parts.append(term.green(f"{len(added)} added"))
+    if removed:
+        parts.append(term.red(f"{len(removed)} removed"))
+    if changed:
+        parts.append(term.yellow(f"{len(changed)} changed"))
+    parts.append(term.dim(f"{len(unchanged)} unchanged"))
+    print("   " + "   ".join(parts))
+
+
+def _pi_family_home(harness: str) -> Path:
+    """The real agent directory for Pi or OMP."""
+    return (
+        pi_config.default_pi_home()
+        if harness == "pi"
+        else pi_config.default_omp_home()
+    )
+
+
+def _pi_family_reset(
+    home: Path,
+    harness: str,
+    profile_name: str,
+    force: bool,
+    yes: bool,
+) -> int:
+    """Remove one Pi-family provider block."""
+    state_path = home / pi_config.STATE_FILENAME
+    state = pi_config.read_state(state_path, harness)
+    catalog_path = pi_config.catalog_path_for(home, harness)
+
+    if state is None:
+        if not force:
+            print(term.heading("Reset without a state file"))
+            print(term.dim("   xsync did not record this setup. It would remove:"))
+            print(f"   {term.red('-')} providers.{profile_name}")
+            _fail("add --force to continue.")
+            return EXIT_ERROR
+        print(term.heading("Reset without a state file"))
+        print(f"   {term.red('-')} providers.{profile_name}")
+        if not yes and not _confirm(
+            f"Remove the {harness} setup of {profile_name!r}?"
+        ):
+            _fail("stopped. Nothing was removed.")
+            return EXIT_ERROR
+        state = pi_config.State(
+            profile=profile_name,
+            provider_id=profile_name,
+            catalog_file=str(catalog_path),
+        )
+    elif state.catalog_file:
+        catalog_path = Path(state.catalog_file)
+
+    removed = pi_config.reset_provider(catalog_path, state)
+    pi_config.clear_state(state_path, harness)
+    print(term.heading("Reset"))
+    print(term.rule())
+    for name in removed:
+        print(f"   {term.red('-')} {name}")
+    print(term.rule())
+    _ok(f"{harness} is back at its own defaults.")
+    print()
+    return EXIT_OK
+
+
+def _pi_family_apply(args: argparse.Namespace, harness: str) -> int:
+    """Write the real Pi or OMP model catalog."""
+    profile = _resolve_profile(args)
+    if profile is None:
+        return EXIT_ERROR
+
+    home = _pi_family_home(harness)
+    catalog_path = pi_config.catalog_path_for(home, harness)
+    state_path = home / pi_config.STATE_FILENAME
+
+    if args.reset:
+        try:
+            return _pi_family_reset(
+                home,
+                harness,
+                profile.name,
+                args.force,
+                args.yes,
+            )
+        except pi_config.PiConfigError as error:
+            _fail(str(error))
+            return EXIT_ERROR
+
+    models, code = _models_for(profile)
+    if models is None:
+        return code
+
+    try:
+        api_key = profile.resolve_key(os.environ)
+        catalog = pi_config.read_catalog(catalog_path)
+    except (pi_config.PiConfigError, ProfileError) as error:
+        _fail(str(error))
+        return EXIT_ERROR
+
+    provider = pi_config.render_provider(harness, profile, api_key, models)
+    current = pi_config.current_provider(catalog, profile.name)
+    _print_pi_family_report(harness, provider, current, profile)
+
+    if args.dry_run:
+        message = pi_config.check_provider_match(catalog, profile)
+        if message:
+            print()
+            _warn(message)
+        print(term.dim("   no file written (--dry-run)\n"))
+        return EXIT_OK
+
+    try:
+        state = pi_config.write_provider(
+            catalog_path,
+            harness,
+            profile,
+            api_key,
+            models,
+        )
+        pi_config.write_state(state_path, harness, state)
+    except pi_config.PiConfigError as error:
+        _fail(str(error))
+        return EXIT_ERROR
+
+    _ok(
+        f"wrote {term.bold(str(len(models)))} models to "
+        f"{term.dim(str(catalog_path))}"
+    )
+    print(term.dim(f"   run /model in {harness} to pick one\n"))
+    return EXIT_OK
+
+
+def _print_pi_family_report(
+    harness: str,
+    provider: dict,
+    current: dict,
+    profile: Profile,
+) -> None:
+    """Show the difference of one Pi-family sync."""
+    print(term.heading(f"Sync {profile.name} → {harness}"))
+    print(term.dim(f"   {profile.base_url}"))
+    print(term.rule())
+
+    old_rows = current.get("models")
+    new_rows = provider["models"]
+    old = {
+        row.get("id"): row
+        for row in old_rows
+        if isinstance(row, dict) and row.get("id")
+    } if isinstance(old_rows, list) else {}
+    new = {row["id"]: row for row in new_rows}
+    added = [slug for slug in new if slug not in old]
+    removed = [slug for slug in old if slug not in new]
+    changed = [slug for slug in new if slug in old and new[slug] != old[slug]]
+    unchanged = [slug for slug in new if slug in old and new[slug] == old[slug]]
+    settings_changed = any(
+        current.get(key) != provider.get(key)
+        for key in ("api", "apiKey", "auth", "baseUrl")
+    )
+
+    if not (added or removed or changed or settings_changed):
+        _ok(f"up to date. {term.bold(str(len(new)))} models, no change")
+        return
+
+    if settings_changed:
+        print(f"   {term.yellow('~')} provider settings")
+    for slug in added:
+        print(f"   {term.green('+')} {slug}")
+    for slug in removed:
+        print(f"   {term.red('-')} {term.dim(slug)}")
+    for slug in changed:
+        print(f"   {term.yellow('~')} {slug}")
+
+    print(term.rule())
+    parts = []
+    if added:
+        parts.append(term.green(f"{len(added)} added"))
+    if removed:
+        parts.append(term.red(f"{len(removed)} removed"))
+    if changed:
+        parts.append(term.yellow(f"{len(changed)} changed"))
+    parts.append(term.dim(f"{len(unchanged)} unchanged"))
+    print("   " + "   ".join(parts))
+
+
 def _resolve_profile(args: argparse.Namespace):
     """The profile of this run, or None after an error."""
     store = open_store()
@@ -818,6 +1171,9 @@ def _models_for(profile) -> tuple[list | None, int]:
 YOLO_FLAG = {
     "codex": "--dangerously-bypass-approvals-and-sandbox",
     "claude": "--dangerously-skip-permissions",
+    "opencode": "--auto",
+    "pi": "--approve",
+    "omp": "--yolo",
 }
 
 
@@ -854,12 +1210,32 @@ def _open_harness(args: argparse.Namespace, harness: str) -> int:
         _fail(str(error))
         return EXIT_ERROR
 
+    environment: dict[str, str] | None = None
     if harness == "codex":
         prepare_codex_home(home, default_codex_home(), profile, api_key, models)
         command, variable = "codex", "CODEX_HOME"
-    else:
+    elif harness == "claude":
         prepare_claude_home(home, default_claude_home(), profile, api_key, models)
         command, variable = "claude", "CLAUDE_CONFIG_DIR"
+    elif harness == "opencode":
+        environment = prepare_opencode_home(
+            home,
+            opencode_config.default_opencode_home(),
+            profile,
+            api_key,
+            models,
+        )
+        command, variable = "opencode", ""
+    else:
+        environment = prepare_pi_family_home(
+            home,
+            _pi_family_home(harness),
+            harness,
+            profile,
+            api_key,
+            models,
+        )
+        command, variable = harness, ""
 
     print(term.heading(f"{command} · {profile.name}"))
     print(term.dim(f"   {profile.base_url}"))
@@ -868,7 +1244,10 @@ def _open_harness(args: argparse.Namespace, harness: str) -> int:
     print()
 
     try:
-        launch(command, variable, str(home), _extra_args(args, harness))
+        if environment is None:
+            launch(command, variable, str(home), _extra_args(args, harness))
+        else:
+            launch_environment(command, environment, _extra_args(args, harness))
     except HomeError as error:
         _fail(str(error))
         return EXIT_ERROR
@@ -895,6 +1274,27 @@ def cmd_claude(args: argparse.Namespace) -> int:
             args.init = True
         return _claude_apply(args)
     return _open_harness(args, "claude")
+
+
+def cmd_opencode(args: argparse.Namespace) -> int:
+    """Open an isolated OpenCode, or write the real one."""
+    if args.action == "apply":
+        return _opencode_apply(args)
+    return _open_harness(args, "opencode")
+
+
+def cmd_pi(args: argparse.Namespace) -> int:
+    """Open an isolated Pi, or write the real one."""
+    if args.action == "apply":
+        return _pi_family_apply(args, "pi")
+    return _open_harness(args, "pi")
+
+
+def cmd_omp(args: argparse.Namespace) -> int:
+    """Open an isolated OMP, or write the real one."""
+    if args.action == "apply":
+        return _pi_family_apply(args, "omp")
+    return _open_harness(args, "omp")
 
 
 def _add_harness_arguments(parser: argparse.ArgumentParser) -> None:
@@ -938,7 +1338,13 @@ def build_parser() -> argparse.ArgumentParser:
     )
     sub = parser.add_subparsers(dest="command", metavar="command")
 
-    sub.add_parser("setup", help="make a profile").set_defaults(func=cmd_setup)
+    setup = sub.add_parser("setup", help="make a profile")
+    setup.add_argument(
+        "--endpoint-type",
+        choices=ENDPOINT_TYPES,
+        help="set the endpoint compatibility mode",
+    )
+    setup.set_defaults(func=cmd_setup)
     sub.add_parser("list", help="show the profiles").set_defaults(func=cmd_list)
 
     use = sub.add_parser("use", help="set the active profile")
@@ -973,6 +1379,42 @@ def build_parser() -> argparse.ArgumentParser:
     _add_harness_arguments(claude)
     claude.set_defaults(func=cmd_claude)
 
+    opencode = sub.add_parser(
+        "opencode",
+        help="open an isolated OpenCode on the active profile",
+        description=(
+            "Open an OpenCode that talks to the endpoint of the profile. The "
+            "real OpenCode of the user stays as it is. Add `apply` to write "
+            "the real OpenCode instead."
+        ),
+    )
+    _add_harness_arguments(opencode)
+    opencode.set_defaults(func=cmd_opencode)
+
+    pi = sub.add_parser(
+        "pi",
+        help="open an isolated Pi on the active profile",
+        description=(
+            "Open a Pi that talks to the endpoint of the profile. The real "
+            "Pi configuration stays as it is. Add `apply` to write the real "
+            "Pi model catalog instead."
+        ),
+    )
+    _add_harness_arguments(pi)
+    pi.set_defaults(func=cmd_pi)
+
+    omp = sub.add_parser(
+        "omp",
+        help="open an isolated OMP on the active profile",
+        description=(
+            "Open an OMP that talks to the endpoint of the profile. The real "
+            "OMP configuration stays as it is. Add `apply` to write the real "
+            "OMP model catalog instead."
+        ),
+    )
+    _add_harness_arguments(omp)
+    omp.set_defaults(func=cmd_omp)
+
     help_command = sub.add_parser("help", help="show this help, or the help of a command")
     help_command.add_argument("topic", nargs="?", help="a command name")
     help_command.set_defaults(func=cmd_help)
@@ -1002,6 +1444,12 @@ def main(argv: list[str] | None = None) -> int:
         return EXIT_OK
     try:
         return args.func(args)
-    except (ProfileError, ConfigError, ClaudeConfigError) as error:
+    except (
+        ProfileError,
+        ConfigError,
+        ClaudeConfigError,
+        opencode_config.OpenCodeConfigError,
+        pi_config.PiConfigError,
+    ) as error:
         print(f"error: {error}", file=sys.stderr)
         return EXIT_ERROR

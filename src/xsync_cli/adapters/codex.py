@@ -102,11 +102,23 @@ def _display_name(model: Model) -> str:
     return " ".join(word[:1].upper() + word[1:] for word in words if word)
 
 
+def _capability(model: Model, values: dict[str, Any], name: str) -> bool:
+    """Use the endpoint value, or use the rule when the value is absent."""
+    reported = model.reported_capabilities
+    if reported is None or name in reported:
+        return bool(getattr(model, name))
+    return bool(values[name])
+
+
 def render_entry(model: Model, rules: Rules) -> dict[str, Any]:
     """One Codex catalog entry."""
     values = rules.for_model(model)
     context_window = model.context_window or values["default_context_window"]
-    modalities = ["text", "image"] if model.vision else ["text"]
+    vision = _capability(model, values, "vision")
+    reasoning = _capability(model, values, "reasoning")
+    tools = _capability(model, values, "tools")
+    search = _capability(model, values, "search")
+    modalities = ["text", "image"] if vision else ["text"]
 
     return {
         "slug": model.slug,
@@ -115,7 +127,7 @@ def render_entry(model: Model, rules: Rules) -> dict[str, Any]:
         # Codex accepts a string here. A null stops Codex at startup.
         "default_reasoning_level": values["default_reasoning_level"],
         "supported_reasoning_levels": (
-            [dict(level) for level in REASONING_LEVELS] if model.reasoning else []
+            [dict(level) for level in REASONING_LEVELS] if reasoning else []
         ),
         "shell_type": values["shell_type"],
         "visibility": values["visibility"],
@@ -131,7 +143,7 @@ def render_entry(model: Model, rules: Rules) -> dict[str, Any]:
             "include_skills_usage_instructions"
         ],
         "supports_reasoning_summaries": (
-            bool(values["supports_reasoning_summaries"]) and model.reasoning
+            bool(values["supports_reasoning_summaries"]) and reasoning
         ),
         "default_reasoning_summary": values["default_reasoning_summary"],
         "support_verbosity": values["support_verbosity"],
@@ -142,14 +154,14 @@ def render_entry(model: Model, rules: Rules) -> dict[str, Any]:
         # the endpoint.
         "web_search_tool_type": values["web_search_tool_type"],
         "truncation_policy": values["truncation_policy"],
-        "supports_parallel_tool_calls": model.tools,
+        "supports_parallel_tool_calls": tools,
         "supports_image_detail_original": values["supports_image_detail_original"],
         "context_window": context_window,
         "max_context_window": context_window,
         "effective_context_window_percent": values["effective_context_window_percent"],
         "experimental_supported_tools": [],
         "input_modalities": modalities,
-        "supports_search_tool": model.search,
+        "supports_search_tool": search,
         "use_responses_lite": values["use_responses_lite"],
     }
 

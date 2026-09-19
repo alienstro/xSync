@@ -1,7 +1,7 @@
 # xsync-cli
 
-Point Codex and Claude Code at any OpenAI-compatible endpoint, with every
-model of that endpoint in the model picker.
+Point Codex, Claude Code, OpenCode, Pi, and OMP at any OpenAI-compatible
+endpoint. Every endpoint model appears in the model picker.
 
 ```
 $ xsync claude
@@ -23,6 +23,9 @@ as they are. Add `apply` when you do want to change them.
 |---|---|
 | Codex | An endpoint that answers `GET /v1/models`. |
 | Claude Code | The same, and `POST /v1/messages` for the requests. |
+| OpenCode | The same model endpoint, plus Chat Completions or Responses. |
+| Pi | The same model endpoint and selected wire API. |
+| OMP | The same model endpoint and selected wire API. |
 
 ## Install
 
@@ -56,9 +59,12 @@ you do not know.
 
     xsync codex
     xsync claude
+    xsync opencode
+    xsync pi
+    xsync omp
 
-The command builds a home for the profile, then starts the harness in that
-home. The real Codex and the real Claude Code of the user stay as they are.
+The command builds a home for the profile. It then starts the harness in
+that home. The real harness configuration stays unchanged.
 
 Arguments after `--` go to the harness:
 
@@ -68,6 +74,9 @@ Arguments after `--` go to the harness:
 
     xsync codex apply
     xsync claude apply
+    xsync opencode apply
+    xsync pi apply
+    xsync omp apply
 
 The `apply` verb changes the real home of the user. Read **Safety** before
 you use it.
@@ -83,9 +92,15 @@ you use it.
 | `xsync help` | Show the help. `xsync help codex` explains one command. |
 | `xsync codex` | Open a Codex on the active profile, in its own home. |
 | `xsync claude` | Open a Claude Code the same way. |
+| `xsync opencode` | Open an OpenCode the same way. |
+| `xsync pi` | Open a Pi the same way. |
+| `xsync omp` | Open an OMP the same way. |
 | `xsync codex -- <args>` | The arguments after `--` go to the harness. |
 | `xsync codex apply` | Write the real Codex of the user. |
 | `xsync claude apply` | Write the real Claude Code of the user. |
+| `xsync opencode apply` | Write the real OpenCode of the user. |
+| `xsync pi apply` | Write the real Pi model catalog. |
+| `xsync omp apply` | Write the real OMP model catalog. |
 | `xsync <harness> apply --dry-run` | Show the difference. Write nothing. |
 | `xsync <harness> apply --reset` | Remove everything that xSync wrote. |
 | `xsync <harness> apply --reset --force --yes` | Reset with no question. |
@@ -94,9 +109,12 @@ you use it.
 
 ## The isolated home
 
-`xsync codex` and `xsync claude` do not change the settings of the user. Each
-one builds a home under `~/.config/xsync/homes/<profile>/`, and then starts
-the harness with `CODEX_HOME` or with `CLAUDE_CONFIG_DIR` set to that home.
+The normal harness commands do not change the settings of the user. Each
+command builds a home under `~/.config/xsync/homes/<profile>/`.
+
+Codex uses `CODEX_HOME`. Claude Code uses `CLAUDE_CONFIG_DIR`. OpenCode uses
+isolated XDG config, data, cache, and state directories. Pi and OMP use
+`PI_CODING_AGENT_DIR`.
 
 The home starts as a copy of the real settings file, so the hooks of the
 user and the trusted projects of the user stay. xSync then points the copy at
@@ -106,8 +124,11 @@ The home shares the work of the user through a symbolic link:
 
 | Harness | Shared |
 |---|---|
-| Codex | `skills`, `plugins`, `marketplaces`, `memories`, `AGENTS.md` |
+| Codex | `skills`, `plugins`, `marketplaces`, `memories`, `AGENTS.md`, `auth.json` |
 | Claude Code | `agents`, `skills`, `plugins`, `hooks`, `commands`, `CLAUDE.md` |
+| OpenCode | `agents`, `commands`, `plugins`, `skills`, `AGENTS.md` |
+| Pi | `agents`, `extensions`, `plugins`, `prompts`, `skills`, `themes` |
+| OMP | `agents`, `extensions`, `plugins`, `prompts`, `skills`, `themes` |
 
 A session, a cache, and a log stay inside the isolated home. They never mix
 with the real home.
@@ -154,6 +175,73 @@ xSync sets `replaceBuiltInOptions` to `false`. The built-in models stay at
 the top of the picker, and the router models come after them. A router that
 stops therefore leaves a working picker.
 
+## OpenCode
+
+    xsync opencode
+    xsync opencode apply
+
+xSync writes one custom provider with every model from `GET /v1/models`.
+It uses the profile name as the OpenCode provider id.
+
+xSync selects `@ai-sdk/openai-compatible` for `chat`. It selects
+`@ai-sdk/openai` for `responses`.
+
+An isolated session copies the global OpenCode config files. It links the
+user agents, commands, plugins, skills, and `AGENTS.md`.
+
+The isolated session uses separate XDG data, cache, and state directories.
+The real OpenCode state stays unchanged.
+
+`xsync opencode apply` writes only `provider.<profile>` in
+`~/.config/opencode/opencode.json`.
+
+## Pi and OMP
+
+    xsync pi
+    xsync omp
+    xsync pi apply
+    xsync omp apply
+
+Pi reads custom providers from `~/.pi/agent/models.json`. OMP reads them
+from `~/.omp/agent/models.yml`.
+
+xSync selects `openai-completions` for `chat`. It selects
+`openai-responses` for a generic Responses endpoint.
+
+A CLIProxy profile uses `openai-codex-responses`. This keeps Codex-specific
+request and response handling.
+
+The isolated commands copy regular settings and credential files. They link
+extensions, plugins, prompts, skills, themes, and agents.
+
+The isolated commands keep sessions and XDG state inside the xSync home.
+
+`xsync pi apply` writes only `providers.<profile>` in `models.json`.
+`xsync omp apply` writes only `providers.<profile>` in `models.yml`.
+
+## CLIProxy
+
+Use this command when the profile name does not contain `cliproxy`:
+
+    xsync setup --endpoint-type cliproxy
+
+xSync also detects CLIProxy from a profile name that contains `cliproxy`.
+It detects the default CLIProxy port `8317`.
+
+Use `responses` for a CLIProxy profile that serves Codex. xSync selects
+`responses` as the setup default for CLIProxy.
+
+For Codex, xSync writes `requires_openai_auth = true`. It writes the profile
+key as `experimental_bearer_token`.
+
+The isolated Codex home copies `auth.json`. This preserves the Codex login
+that CLIProxy uses with its recommended OAuth mode.
+
+For OpenCode, xSync selects `@ai-sdk/openai` for the CLIProxy Responses API.
+
+For Pi and OMP, xSync selects `openai-codex-responses`. It does not install
+an external provider plugin or change provider accounts.
+
 ## Switch between endpoints
 
 Each profile gets a home of its own. Therefore two endpoints never mix:
@@ -183,16 +271,21 @@ Path: `~/.config/xsync/profiles.toml`. Mode: `0600`.
     base_url = "http://127.0.0.1:20128/v1"
     api_key = "sk-..."
     wire_api = "responses"
+    endpoint_type = "cliproxy"
 
     [profiles.openrouter]
     base_url = "https://openrouter.ai/api/v1"
     api_key_env = "OPENROUTER_API_KEY"
     wire_api = "chat"
+    endpoint_type = "generic"
     exclude = ["*-embedding-*"]
 
 A profile uses `api_key` or `api_key_env`, but not both. Use `api_key_env`
 when you share the file. A profile with neither key sends no `Authorization`
 header.
+
+The `endpoint_type` value is `generic` or `cliproxy`. Existing profiles use
+`generic` when the field is absent.
 
 ## The filters
 
@@ -213,7 +306,7 @@ The match ignores the letter case.
 ## Safety
 
 **The everyday commands write nothing outside `~/.config/xsync/`.** Only
-`apply` touches `~/.codex` or `~/.claude`.
+`apply` touches a real harness configuration.
 
 - The catalog write is atomic. xSync writes a temporary file, confirms the
   JSON, and then replaces the target. It keeps one backup with the suffix
@@ -255,6 +348,9 @@ keep the color in a pipe.
 | `~/.codex/config.toml` | yes | only with `apply` |
 | `~/.codex/<profile>-models.json` | yes | only with `apply` |
 | `~/.claude/settings.json` | yes | only with `apply` |
+| `~/.config/opencode/opencode.json` | yes | only with `apply` |
+| `~/.pi/agent/models.json` | yes | only with `apply` |
+| `~/.omp/agent/models.yml` | yes | only with `apply` |
 | `.xsync-state.json` in each home | yes | only with `apply` |
 
 xSync copies the real settings file when it builds an isolated home. It
@@ -275,11 +371,15 @@ approximately 8 of them:
 | `supports_search_tool` | the search flag |
 
 The other fields come from `adapters/rules/codex.toml`. The rules apply in
-three layers. A later layer wins:
+four layers. A later layer wins:
 
 1. `[defaults]`
 2. `[prefix.<first slug segment>]`
-3. `[slug."<exact slug>"]`
+3. `[name."<last slug segment>"]`
+4. `[slug."<exact slug>"]`
+
+Some endpoints omit capability fields. In that case, the Codex rules supply
+the capability values.
 
 Every default value comes from a catalog that works with codex-cli 0.153.4.
 

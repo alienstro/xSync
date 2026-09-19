@@ -39,6 +39,24 @@ def _load_document(path: Path) -> tomlkit.TOMLDocument:
     return tomlkit.parse(path.read_text(encoding="utf-8"))
 
 
+def provider_entry(profile: Profile, api_key: str | None) -> tomlkit.items.Table:
+    """Build one Codex provider block."""
+    entry = tomlkit.table()
+    entry["name"] = "OpenAI" if profile.endpoint_type == "cliproxy" else profile.name
+    entry["base_url"] = profile.base_url
+    entry["wire_api"] = profile.wire_api
+
+    if profile.endpoint_type == "cliproxy":
+        entry["requires_openai_auth"] = True
+        if api_key:
+            entry["experimental_bearer_token"] = api_key
+    elif api_key:
+        headers = tomlkit.table()
+        headers["Authorization"] = f"Bearer {api_key}"
+        entry["http_headers"] = headers
+    return entry
+
+
 def known_removals(profile_name: str) -> State:
     """The removal set when no state file exists."""
     return State(
@@ -80,15 +98,7 @@ def init_config(
         providers = tomlkit.table(is_super_table=True)
         document["model_providers"] = providers
 
-    entry = tomlkit.table()
-    entry["name"] = profile.name
-    entry["base_url"] = profile.base_url
-    entry["wire_api"] = profile.wire_api
-    if api_key:
-        headers = tomlkit.table()
-        headers["Authorization"] = f"Bearer {api_key}"
-        entry["http_headers"] = headers
-    providers[profile.name] = entry
+    providers[profile.name] = provider_entry(profile, api_key)
 
     _atomic_toml_write(config_path, document, before)
 

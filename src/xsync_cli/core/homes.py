@@ -13,14 +13,31 @@ from __future__ import annotations
 
 import os
 import shutil
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Callable
 
 # The folders and the files that both homes share. A session folder, a
 # cache, and a log never appear here. Those hold state of one run.
-SHARED_CODEX = ("skills", "plugins", "marketplaces", "memories", "AGENTS.md")
+SHARED_CODEX = (
+    "skills",
+    "plugins",
+    "marketplaces",
+    "memories",
+    "AGENTS.md",
+    "auth.json",
+)
 SHARED_CLAUDE = ("agents", "skills", "plugins", "hooks", "commands", "CLAUDE.md")
+SHARED_OPENCODE = ("agents", "commands", "plugins", "skills", "AGENTS.md")
+SHARED_PI_FAMILY = (
+    "agents",
+    "extensions",
+    "plugins",
+    "prompts",
+    "prompt_templates",
+    "skills",
+    "themes",
+)
 
 
 class HomeError(Exception):
@@ -98,6 +115,25 @@ def launch(
     """
     env = dict(os.environ)
     env[home_variable] = str(home)
+    argv = [command, *extra_args]
+    runner = exec_fn or _default_exec
+    try:
+        runner(command, argv, env)
+    except FileNotFoundError:
+        raise HomeError(
+            f"the command {command!r} is not found. Install it, or add it to PATH."
+        ) from None
+
+
+def launch_environment(
+    command: str,
+    environment: Mapping[str, str],
+    extra_args: Sequence[str],
+    exec_fn: Callable[[str, list[str], dict[str, str]], None] | None = None,
+) -> None:
+    """Start a harness with multiple environment overrides."""
+    env = dict(os.environ)
+    env.update(environment)
     argv = [command, *extra_args]
     runner = exec_fn or _default_exec
     try:

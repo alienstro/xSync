@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from dataclasses import field
 
 
 @dataclass(frozen=True, slots=True)
@@ -10,8 +11,8 @@ class Model:
     """One model, as an endpoint reports it.
 
     The fields hold facts about the model. They do not hold harness
-    settings. An endpoint that reports no capabilities gives None or
-    False. The adapter rules then supply a value.
+    settings. The reported_capabilities field shows which Boolean values
+    came from the endpoint.
     """
 
     slug: str
@@ -22,6 +23,7 @@ class Model:
     tools: bool
     search: bool
     owned_by: str | None
+    reported_capabilities: frozenset[str] | None = field(default=None)
 
     @property
     def prefix(self) -> str:

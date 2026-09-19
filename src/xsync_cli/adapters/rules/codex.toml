@@ -37,6 +37,10 @@ use_responses_lite = false
 default_context_window = 128000
 additional_speed_tiers = []
 service_tiers = []
+vision = false
+reasoning = false
+tools = true
+search = false
 
 [defaults.truncation_policy]
 mode = "tokens"
@@ -56,6 +60,10 @@ priority = 18
 default_verbosity = "low"
 include_skills_usage_instructions = true
 additional_speed_tiers = ["fast"]
+vision = true
+reasoning = true
+tools = true
+search = true
 service_tiers = [
   { id = "priority", name = "Fast", description = "1.5x speed, increased usage" },
 ]
@@ -66,6 +74,34 @@ model_messages_file = "gpt-5.4.messages.json"
 priority = 14
 default_verbosity = "low"
 additional_speed_tiers = ["fast"]
+vision = true
+reasoning = true
+tools = true
+search = true
 service_tiers = [
   { id = "priority", name = "Fast", description = "1.5x speed, increased usage" },
 ]
+
+[name."gpt-5.3-codex"]
+vision = true
+reasoning = true
+tools = true
+search = true
+
+[name."gpt-5.6-sol"]
+vision = true
+reasoning = true
+tools = true
+search = true
+
+[name."gpt-5.6-terra"]
+vision = true
+reasoning = true
+tools = true
+search = true
+
+[name."gpt-5.6-luna"]
+vision = true
+reasoning = true
+tools = true
+search = true

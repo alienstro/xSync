@@ -15,6 +15,7 @@ from pathlib import Path
 import tomlkit
 
 WIRE_APIS = ("chat", "responses")
+ENDPOINT_TYPES = ("generic", "cliproxy")
 
 
 class ProfileError(Exception):
@@ -37,6 +38,7 @@ class Profile:
     wire_api: str
     include: list[str] = field(default_factory=list)
     exclude: list[str] = field(default_factory=list)
+    endpoint_type: str = "generic"
 
     def __post_init__(self) -> None:
         if self.api_key and self.api_key_env:
@@ -48,6 +50,11 @@ class Profile:
             raise ProfileError(
                 f"profile {self.name!r} has wire_api {self.wire_api!r}. "
                 f"Use one of {', '.join(WIRE_APIS)}."
+            )
+        if self.endpoint_type not in ENDPOINT_TYPES:
+            raise ProfileError(
+                f"profile {self.name!r} has endpoint_type {self.endpoint_type!r}. "
+                f"Use one of {', '.join(ENDPOINT_TYPES)}."
             )
         object.__setattr__(self, "base_url", self.base_url.rstrip("/"))
 
@@ -67,7 +74,11 @@ class Profile:
 
     def to_table(self) -> dict[str, object]:
         """The profile as plain data, without the name."""
-        table: dict[str, object] = {"base_url": self.base_url, "wire_api": self.wire_api}
+        table: dict[str, object] = {
+            "base_url": self.base_url,
+            "wire_api": self.wire_api,
+            "endpoint_type": self.endpoint_type,
+        }
         if self.api_key:
             table["api_key"] = self.api_key
         if self.api_key_env:
@@ -105,6 +116,7 @@ class ProfileStore:
                 wire_api=str(table.get("wire_api", "chat")),
                 include=list(table.get("include", [])),
                 exclude=list(table.get("exclude", [])),
+                endpoint_type=str(table.get("endpoint_type", "generic")),
             )
         if self.active not in self._profiles:
             self.active = next(iter(self._profiles), None)

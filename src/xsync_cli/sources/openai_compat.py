@@ -49,6 +49,11 @@ def parse_models(payload: dict[str, Any]) -> list[Model]:
         capabilities = entry.get("capabilities")
         if not isinstance(capabilities, dict):
             capabilities = {}
+        reported_capabilities = frozenset(
+            name
+            for name in ("vision", "reasoning", "tools", "search")
+            if isinstance(capabilities.get(name), bool)
+        )
         context_window = _as_int(capabilities.get("contextWindow")) or _as_int(
             entry.get("context_length")
         )
@@ -65,6 +70,7 @@ def parse_models(payload: dict[str, Any]) -> list[Model]:
                 tools=_as_bool(capabilities.get("tools")),
                 search=_as_bool(capabilities.get("search")),
                 owned_by=entry.get("owned_by"),
+                reported_capabilities=reported_capabilities,
             )
         )
     models.sort(key=lambda model: model.slug)
