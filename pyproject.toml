@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "xsync-cli"
-version = "0.3.0"
+version = "0.3.1"
 description = "Sync OpenAI-compatible models into Codex, Claude Code, OpenCode, Pi, and OMP."
 readme = "README.md"
 requires-python = ">=3.11"

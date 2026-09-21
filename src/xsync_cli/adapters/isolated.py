@@ -20,7 +20,7 @@ from xsync_cli.adapters.codex import load_rules as load_codex_rules
 from xsync_cli.adapters.codex import render_catalog
 from xsync_cli.adapters.codex_wiring import provider_entry
 from xsync_cli.adapters.opencode_config import render_provider
-from xsync_cli.adapters import pi_config
+from xsync_cli.adapters import claude_config, pi_config
 from xsync_cli.core.atomic import write_json_atomic
 from xsync_cli.core.homes import (
     SHARED_CLAUDE,
@@ -101,10 +101,11 @@ def prepare_claude_home(
         except json.JSONDecodeError:
             settings = {}
 
-    environment = dict(settings.get("env") or {})
-    environment["ANTHROPIC_BASE_URL"] = profile.base_url
-    if api_key:
-        environment["ANTHROPIC_AUTH_TOKEN"] = api_key
+    environment, _ = claude_config.endpoint_environment(
+        settings.get("env"),
+        profile,
+        api_key,
+    )
     settings["env"] = environment
 
     rows = render_rows(models, load_claude_rules())

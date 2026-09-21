@@ -21,6 +21,7 @@ STATE_FILENAME = ".xsync-state.json"
 STATE_VERSION = 1
 BASE_URL_KEY = "ANTHROPIC_BASE_URL"
 TOKEN_KEY = "ANTHROPIC_AUTH_TOKEN"
+DISABLE_EXPERIMENTAL_BETAS_KEY = "CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS"
 PICKER_KEY = "modelPicker"
 
 
@@ -80,6 +81,30 @@ def check_endpoint_match(settings: dict[str, Any], profile: Profile) -> str | No
         )
     return None
 
+def _is_9router(profile: Profile) -> bool:
+    """True when the profile name identifies 9Router."""
+    compact = "".join(
+        character for character in profile.name.lower() if character.isalnum()
+    )
+    return "9router" in compact
+
+def endpoint_environment(
+    current: dict[str, Any] | None,
+    profile: Profile,
+    api_key: str | None,
+) -> tuple[dict[str, Any], list[str]]:
+    """Build the Claude endpoint environment and list the keys xSync added."""
+    environment = dict(current or {})
+    environment[BASE_URL_KEY] = profile.base_url
+    keys = [f"env.{BASE_URL_KEY}"]
+    if api_key:
+        environment[TOKEN_KEY] = api_key
+        keys.append(f"env.{TOKEN_KEY}")
+    if _is_9router(profile) and DISABLE_EXPERIMENTAL_BETAS_KEY not in environment:
+        environment[DISABLE_EXPERIMENTAL_BETAS_KEY] = "1"
+        keys.append(f"env.{DISABLE_EXPERIMENTAL_BETAS_KEY}")
+    return environment, keys
+
 
 @dataclass(frozen=True, slots=True)
 class State:
@@ -115,12 +140,11 @@ def init_settings(path: Path, profile: Profile, api_key: str | None) -> State:
     before = file_sha256(path)
     settings = read_settings(path)
 
-    environment = dict(settings.get("env") or {})
-    environment[BASE_URL_KEY] = profile.base_url
-    keys = [f"env.{BASE_URL_KEY}"]
-    if api_key:
-        environment[TOKEN_KEY] = api_key
-        keys.append(f"env.{TOKEN_KEY}")
+    environment, keys = endpoint_environment(
+        settings.get("env"),
+        profile,
+        api_key,
+    )
     settings["env"] = environment
 
     _write_atomic(path, settings, before)

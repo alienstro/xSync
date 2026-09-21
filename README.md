@@ -152,6 +152,13 @@ The endpoint must answer the Anthropic API at `POST /v1/messages`. An
 endpoint that answers only the OpenAI API works with Codex, not with Claude
 Code.
 
+For a profile name that contains `9router`, xSync also sets
+`CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS=1` unless the user already set it.
+This avoids 9Router's current `safeguards` rejection when the router changes
+Claude Code beta headers. This setting disables Claude Code beta-only
+features. Remove the override after 9Router preserves the `anthropic-beta`
+header.
+
 ### The map to a known model
 
 Claude Code refuses a model that it does not know:
