@@ -156,23 +156,24 @@ def test_setup_never_shows_the_key_length(store_path, monkeypatch, capsys):
     assert "chars" not in out
 
 
-def test_setup_takes_the_wire_api_from_an_existing_provider(
+def test_setup_does_not_ask_for_the_wire_api(
     store_path, tmp_path, monkeypatch, capsys
 ):
-    codex = tmp_path / "codex"
-    codex.mkdir()
-    (codex / "config.toml").write_text(
-        '[model_providers.old]\n'
-        'base_url = "http://h/v1"\nwire_api = "responses"\n'
-    )
-    monkeypatch.setenv("CODEX_HOME", str(codex))
+    monkeypatch.setenv("CODEX_HOME", str(tmp_path / "codex"))
+    prompts = []
+    answers = iter(["p", "http://h/v1", "", ""])
 
-    answers = iter(["p", "http://h/v1", "", "", ""])
-    monkeypatch.setattr("builtins.input", lambda prompt="": next(answers))
+    def answer(prompt=""):
+        prompts.append(prompt)
+        return next(answers)
+
+    monkeypatch.setattr("builtins.input", answer)
     monkeypatch.setattr(cli, "getpass", lambda prompt="": "")
     monkeypatch.setattr(cli, "fetch_models", fake_fetch(["a/one"]))
 
     assert cli.main(["setup"]) == 0
+    assert not any("Wire API" in prompt for prompt in prompts)
+    assert "Wire API" not in capsys.readouterr().out
     assert 'wire_api = "responses"' in store_path.read_text()
 
 

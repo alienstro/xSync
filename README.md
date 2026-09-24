@@ -47,13 +47,9 @@ The command asks for the profile name, the base URL, and the API key. Leave
 the key empty when the endpoint needs none. The command then reads the
 endpoint and shows every model that it serves.
 
-The last question asks for the wire API:
-
-- `chat` — most OpenAI-compatible servers.
-- `responses` — the OpenAI Responses API.
-
-A wrong value breaks every request. Ask the operator of the endpoint when
-you do not know.
+The command does not ask for the wire API. It uses `responses`, or the value
+that Codex already has for the same URL. To change it, edit `wire_api` in the
+profile file.
 
 ### 2. Open a harness
 

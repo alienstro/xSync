@@ -76,14 +76,29 @@ def test_init_records_the_state(tmp_path):
     assert state.config_sha256
 
 
-def test_init_does_not_record_a_key_it_did_not_write(tmp_path):
+def test_init_switches_a_foreign_provider_and_records_the_old_value(tmp_path):
     config = tmp_path / "config.toml"
     # The key must stay at the top level. A key after a table belongs to
     # that table.
     config.write_text('model_provider = "other"\n' + EXISTING)
     state = init_config(config, profile(), tmp_path / "c.json", "sk-1")
-    assert "model_provider" not in state.keys_written
-    assert tomllib.loads(config.read_text())["model_provider"] == "other"
+    assert "model_provider" in state.keys_written
+    assert state.keys_replaced == {"model_provider": "other"}
+    assert tomllib.loads(config.read_text())["model_provider"] == "9router"
+
+
+def test_reset_restores_a_replaced_key(tmp_path):
+    config = tmp_path / "config.toml"
+    config.write_text(
+        'model_provider = "other"\nmodel_catalog_json = "/old.json"\n' + EXISTING
+    )
+    state = init_config(config, profile(), tmp_path / "c.json", "sk-1")
+
+    reset_config(config, state)
+
+    data = tomllib.loads(config.read_text())
+    assert data["model_provider"] == "other"
+    assert data["model_catalog_json"] == "/old.json"
 
 
 def test_reset_removes_only_the_recorded_items(tmp_path):

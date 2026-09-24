@@ -103,6 +103,8 @@ class State:
     keys_written: list[str] = field(default_factory=list)
     blocks_written: list[str] = field(default_factory=list)
     files_written: list[str] = field(default_factory=list)
+    # The values that the written keys held before xSync, for the reset.
+    keys_replaced: dict[str, Any] = field(default_factory=dict)
     config_sha256: str = ""
     written_at: str = ""
 
@@ -121,6 +123,7 @@ def read_state(path: Path) -> State | None:
         keys_written=list(codex.get("keys_written", [])),
         blocks_written=list(codex.get("blocks_written", [])),
         files_written=list(codex.get("files_written", [])),
+        keys_replaced=dict(codex.get("keys_replaced", {})),
         config_sha256=codex.get("config_sha256", ""),
         written_at=codex.get("written_at", ""),
     )

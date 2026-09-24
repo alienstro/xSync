@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import dataclasses
 import json
 import os
 import sys
@@ -55,7 +56,6 @@ from xsync_cli.core.diff import diff_catalogs
 from xsync_cli.core.filters import apply_filters
 from xsync_cli.core.profiles import (
     ENDPOINT_TYPES,
-    WIRE_APIS,
     Profile,
     ProfileError,
     ProfileStore,
@@ -193,33 +193,11 @@ def cmd_setup(args: argparse.Namespace) -> int:
 
     _print_model_table(kept)
 
+    # The endpoint picks the protocol, so setup does not ask for it.
+    # xSync reuses the value that Codex already has for this URL.
     codex_home = default_codex_home()
     known = wire_api_for_url(read_config(codex_home / "config.toml"), base_url)
-    print(term.heading("Wire API"))
-    if known:
-        print(
-            term.dim(
-                f"   Codex already talks to this URL with {known!r}. "
-                "Press Enter to keep it."
-            )
-        )
-    else:
-        print(
-            term.dim(
-                "   Use chat for most OpenAI-compatible servers.\n"
-                "   Use responses for the OpenAI Responses API.\n"
-                "   A wrong value breaks every request."
-            )
-        )
-    wire_default = known or ("responses" if endpoint_type == "cliproxy" else "chat")
-    wire_api = _ask(f"Wire API ({' or '.join(WIRE_APIS)})", wire_default)
-    if known and wire_api != known:
-        _warn(
-            f"Codex uses {known!r} for this URL. The answer {wire_api!r} "
-            "disagrees with it."
-        )
-    if endpoint_type == "cliproxy" and wire_api != "responses":
-        _warn("CLIProxy needs the responses wire API for Codex.")
+    wire_api = known or "responses"
 
     try:
         profile = Profile(
@@ -298,7 +276,6 @@ def _print_profile(profile: Profile, active: bool) -> None:
         ("key", term.mask_key(profile.api_key)
             if profile.api_key
             else (f"${profile.api_key_env}" if profile.api_key_env else "(none)")),
-        ("wire api", profile.wire_api),
         ("type", profile.endpoint_type),
     ]
     if profile.include:
@@ -441,19 +418,6 @@ def _codex_apply(args: argparse.Namespace) -> int:
 
     catalog_path = catalog_path_for(profile, codex_home)
 
-    if args.init:
-        try:
-            api_key = profile.resolve_key(os.environ)
-            state = init_config(config_path, profile, catalog_path, api_key)
-        except (ConfigError, ProfileError) as error:
-            print(f"error: {error}", file=sys.stderr)
-            return EXIT_ERROR
-        write_state(codex_home / STATE_FILENAME, state)
-        _ok(
-            f"Codex now routes to {term.bold(profile.name)} "
-            f"{term.dim('(' + profile.base_url + ')')}"
-        )
-
     try:
         api_key = profile.resolve_key(os.environ)
         models = fetch_models(profile.base_url, api_key)
@@ -466,15 +430,20 @@ def _codex_apply(args: argparse.Namespace) -> int:
 
     models = apply_filters(models, profile.include, profile.exclude)
 
-    config = read_config(config_path)
-    message = check_provider_match(config, profile)
-    if message:
-        if args.dry_run:
-            _warn(message)
-            print()
-        else:
-            _fail(message)
+    # `--init` moves Codex to this profile, so a mismatch is expected then.
+    if not args.init:
+        try:
+            message = check_provider_match(read_config(config_path), profile)
+        except ConfigError as error:
+            print(f"error: {error}", file=sys.stderr)
             return EXIT_ERROR
+        if message:
+            if args.dry_run:
+                _warn(message)
+                print()
+            else:
+                _fail(message)
+                return EXIT_ERROR
 
     catalog = render_catalog(models, load_rules())
     report = diff_catalogs(_load_catalog(catalog_path), catalog)
@@ -484,13 +453,41 @@ def _codex_apply(args: argparse.Namespace) -> int:
         print(term.dim("   no file written (--dry-run)\n"))
         return EXIT_OK
 
+    # Write the catalog before the config refers to it. Codex does not
+    # start when `model_catalog_json` names an absent file.
     write_json_atomic(catalog_path, catalog)
     _ok(
         f"wrote {term.bold(str(len(catalog['models'])))} models to "
         f"{term.dim(str(catalog_path))}"
     )
+
+    if args.init:
+        state_path = codex_home / STATE_FILENAME
+        try:
+            previous = read_state(state_path)
+            state = init_config(config_path, profile, catalog_path, api_key)
+        except ConfigError as error:
+            print(f"error: {error}", file=sys.stderr)
+            return EXIT_ERROR
+        write_state(state_path, _keep_first_values(state, previous))
+        _ok(
+            f"Codex now routes to {term.bold(profile.name)} "
+            f"{term.dim('(' + profile.base_url + ')')}"
+        )
     print()
     return EXIT_OK
+
+
+def _keep_first_values(state: State, previous: State | None) -> State:
+    """Keep the values from before the first apply.
+
+    A second apply sees the values of the first apply. The reset must put
+    back the values from before xSync, so the older record wins.
+    """
+    if previous is None:
+        return state
+    replaced = {**state.keys_replaced, **previous.keys_replaced}
+    return dataclasses.replace(state, keys_replaced=replaced)
 
 
 def _print_report(report, profile: Profile, total: int) -> None:

@@ -9,6 +9,7 @@ from __future__ import annotations
 import datetime as dt
 import os
 from pathlib import Path
+from typing import Any
 
 import tomlkit
 
@@ -20,6 +21,11 @@ MANAGED_KEYS = ("model_catalog_json", "model_provider", "model")
 
 def _now() -> str:
     return dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def _plain(value: Any) -> Any:
+    """A tomlkit item as a plain Python value, for the JSON state file."""
+    return value.unwrap() if hasattr(value, "unwrap") else value
 
 
 def _atomic_toml_write(path: Path, document: tomlkit.TOMLDocument, before: str) -> None:
@@ -77,21 +83,25 @@ def init_config(
 ) -> State:
     """Connect Codex to the endpoint of the profile.
 
-    The function records every key and block that it writes. It does not
-    record a key that already held a different value from another tool.
+    The function records every key and block that it writes. It also
+    records the old value of a key that it replaces, so that a reset can
+    put the old value back.
     """
     before = file_sha256(config_path)
     document = _load_document(config_path)
 
     keys_written: list[str] = []
-
-    document["model_catalog_json"] = str(catalog_path)
-    keys_written.append("model_catalog_json")
-
-    existing_provider = document.get("model_provider")
-    if existing_provider in (None, profile.name):
-        document["model_provider"] = profile.name
-        keys_written.append("model_provider")
+    keys_replaced: dict[str, Any] = {}
+    wanted = {
+        "model_catalog_json": str(catalog_path),
+        "model_provider": profile.name,
+    }
+    for key, value in wanted.items():
+        old = document.get(key)
+        if old is not None and old != value:
+            keys_replaced[key] = _plain(old)
+        document[key] = value
+        keys_written.append(key)
 
     providers = document.get("model_providers")
     if providers is None:
@@ -107,6 +117,7 @@ def init_config(
         keys_written=keys_written,
         blocks_written=[f"model_providers.{profile.name}"],
         files_written=[str(catalog_path)],
+        keys_replaced=keys_replaced,
         config_sha256=file_sha256(config_path),
         written_at=_now(),
     )
@@ -123,7 +134,10 @@ def reset_config(config_path: Path, state: State) -> list[str]:
     removed: list[str] = []
 
     for key in state.keys_written:
-        if key in document:
+        if key in state.keys_replaced:
+            document[key] = state.keys_replaced[key]
+            removed.append(key)
+        elif key in document:
             del document[key]
             removed.append(key)
 

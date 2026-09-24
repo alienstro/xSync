@@ -1,4 +1,5 @@
 import json
+import tomllib
 
 import pytest
 
@@ -73,15 +74,30 @@ def test_the_exclude_rule_drops_a_model(home, monkeypatch):
     assert [e["slug"] for e in catalog["models"]] == ["a/one"]
 
 
-def test_a_provider_mismatch_stops_the_write(home, monkeypatch, capsys):
+def test_apply_switches_codex_from_another_provider(home, monkeypatch):
     (home / "config.toml").write_text(
         'model_provider = "other"\n\n[model_providers.other]\n'
         'base_url = "https://other/v1"\n'
     )
     monkeypatch.setattr(cli, "fetch_models", stub(["a/one"]))
-    assert cli.main(["codex", "apply"]) == 1
-    assert not (home / "p-models.json").exists()
-    assert "--init" in capsys.readouterr().err
+    assert cli.main(["codex", "apply"]) == 0
+    config = tomllib.loads((home / "config.toml").read_text())
+    assert config["model_provider"] == "p"
+    assert config["model_catalog_json"] == str(home / "p-models.json")
+    assert (home / "p-models.json").exists()
+
+
+def test_a_failed_fetch_leaves_the_config_unchanged(home, monkeypatch):
+    from xsync_cli.sources.openai_compat import EndpointUnreachable
+
+    def failing(*args, **kwargs):
+        raise EndpointUnreachable("refused")
+
+    before = (home / "config.toml").read_text()
+    monkeypatch.setattr(cli, "fetch_models", failing)
+    assert cli.main(["codex", "apply"]) == 2
+    assert (home / "config.toml").read_text() == before
+    assert not (home / ".xsync-state.json").exists()
 
 
 def test_a_mismatch_only_warns_on_a_dry_run(home, monkeypatch):
