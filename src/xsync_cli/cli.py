@@ -3,10 +3,14 @@
 from __future__ import annotations
 
 import argparse
+import contextlib
 import dataclasses
 import json
 import os
+import shutil
+import subprocess
 import sys
+from collections.abc import Callable
 from getpass import getpass
 from pathlib import Path
 
@@ -22,6 +26,7 @@ from xsync_cli.core import term
 from xsync_cli.core.homes import (
     HomeError,
     home_for,
+    homes_root,
     launch,
     launch_environment,
 )
@@ -54,6 +59,12 @@ from xsync_cli.adapters.codex_wiring import init_config, known_removals, reset_c
 from xsync_cli.core.atomic import write_json_atomic
 from xsync_cli.core.diff import diff_catalogs
 from xsync_cli.core.filters import apply_filters
+from xsync_cli.core.install import (
+    InstallError,
+    current_install,
+    uninstall_commands,
+    update_commands,
+)
 from xsync_cli.core.profiles import (
     ENDPOINT_TYPES,
     Profile,
@@ -540,6 +551,14 @@ HELP_GROUPS = (
             ("pi", "open a Pi the same way"),
             ("omp", "open an OMP the same way"),
             ("<harness> apply", "write the real harness of the user"),
+        ),
+    ),
+    (
+        "INSTALL",
+        (
+            ("update", "update xsync with uv, pipx, or git"),
+            ("uninstall", "reset the harnesses, then remove xsync"),
+            ("uninstall --purge", "also delete the profiles and the keys"),
         ),
     ),
     (
@@ -1412,11 +1431,227 @@ def build_parser() -> argparse.ArgumentParser:
     _add_harness_arguments(omp)
     omp.set_defaults(func=cmd_omp)
 
+    update = sub.add_parser(
+        "update",
+        help="update xsync with the tool that installed it",
+        description=(
+            "Update xsync. A git checkout gets a `git pull --ff-only` and a "
+            "reinstall. An install from PyPI gets `uv tool upgrade` or "
+            "`pipx upgrade`."
+        ),
+    )
+    update.add_argument(
+        "--dry-run", action="store_true", help="show the commands. Run nothing"
+    )
+    update.set_defaults(func=cmd_update)
+
+    uninstall = sub.add_parser(
+        "uninstall",
+        help="reset the harnesses, then remove xsync",
+        description=(
+            "Reset every harness that `apply` wrote, then remove the xsync "
+            "package. The profiles stay unless you add --purge."
+        ),
+    )
+    uninstall.add_argument(
+        "--purge",
+        action="store_true",
+        help="also delete the profiles, the API keys, and the isolated homes",
+    )
+    uninstall.add_argument(
+        "--yes", action="store_true", help="do not ask for a confirmation"
+    )
+    uninstall.add_argument(
+        "--dry-run", action="store_true", help="show the plan. Change nothing"
+    )
+    uninstall.set_defaults(func=cmd_uninstall)
+
     help_command = sub.add_parser("help", help="show this help, or the help of a command")
     help_command.add_argument("topic", nargs="?", help="a command name")
     help_command.set_defaults(func=cmd_help)
 
     return parser
+
+
+def _run_command(command: list[str]) -> int:
+    """Run one command in the terminal of the user and give its exit code."""
+    return subprocess.run(command, check=False).returncode
+
+
+def _command_output(command: list[str]) -> str:
+    """Run one command and give its standard output."""
+    return subprocess.run(
+        command, check=False, capture_output=True, text=True
+    ).stdout
+
+
+def _missing_tools(commands: list[list[str]]) -> list[str]:
+    """The programs of the commands that are not on the PATH."""
+    names = dict.fromkeys(command[0] for command in commands)
+    return [name for name in names if shutil.which(name) is None]
+
+
+def _run_all(commands: list[list[str]]) -> bool:
+    """Run the commands in order. Stop at the first failure."""
+    for command in commands:
+        print(term.dim(f"   $ {' '.join(command)}"))
+        if _run_command(command) != 0:
+            _fail(f"this command failed: {' '.join(command)}")
+            return False
+    return True
+
+
+def cmd_update(args: argparse.Namespace) -> int:
+    """Update xSync with the tool that installed it."""
+    try:
+        install = current_install(sys.prefix)
+    except InstallError as error:
+        _fail(str(error))
+        return EXIT_ERROR
+
+    has_git = install.source is not None and (Path(install.source) / ".git").exists()
+    commands = update_commands(install, has_git)
+
+    print(term.heading(f"Update xsync {_version()}"))
+    for command in commands:
+        print(f"   {' '.join(command)}")
+    if args.dry_run:
+        print(term.dim("\n   nothing ran (--dry-run)\n"))
+        return EXIT_OK
+
+    missing = _missing_tools(commands)
+    if missing:
+        _fail(f"install {', '.join(missing)} first. It is not on the PATH.")
+        return EXIT_ERROR
+
+    # A pull over local edits can mix them with the new code.
+    if has_git and _command_output(
+        ["git", "-C", install.source, "status", "--porcelain"]
+    ).strip():
+        _fail(
+            f"{install.source} has uncommitted changes. "
+            "Commit or stash them, then try again."
+        )
+        return EXIT_ERROR
+
+    print()
+    if not _run_all(commands):
+        return EXIT_ERROR
+    _ok("xsync is up to date. Run `xsync help` to see the version.")
+    print()
+    return EXIT_OK
+
+
+def _applied_harnesses() -> list[tuple[str, Path, Callable[[], int]]]:
+    """The harness homes that `apply` wrote, with the reset of each one.
+
+    A home counts only when its state file exists. The reset then reads
+    that file, so it needs no profile name.
+    """
+    found: list[tuple[str, Path, Callable[[], int]]] = []
+
+    codex_home = default_codex_home()
+    if (codex_home / STATE_FILENAME).exists():
+        found.append(("codex", codex_home, lambda: _do_reset(codex_home, "", False, True)))
+
+    claude_home = default_claude_home()
+    if claude_config.read_state(claude_home / claude_config.STATE_FILENAME):
+        found.append(
+            ("claude", claude_home, lambda: _claude_reset(claude_home, "", False, True))
+        )
+
+    opencode_home = opencode_config.default_opencode_home()
+    if (opencode_home / opencode_config.STATE_FILENAME).exists():
+        found.append(
+            (
+                "opencode",
+                opencode_home,
+                lambda: _opencode_reset(opencode_home, "", False, True),
+            )
+        )
+
+    for harness in ("pi", "omp"):
+        home = _pi_family_home(harness)
+        if pi_config.read_state(home / pi_config.STATE_FILENAME, harness):
+            found.append(
+                (
+                    harness,
+                    home,
+                    lambda home=home, harness=harness: _pi_family_reset(
+                        home, harness, "", False, True
+                    ),
+                )
+            )
+    return found
+
+
+def _purge_targets() -> list[Path]:
+    """The xSync data that --purge deletes."""
+    profiles = Path(os.environ.get("XSYNC_PROFILES") or default_store_path())
+    return [path for path in (profiles, homes_root()) if path.exists()]
+
+
+def cmd_uninstall(args: argparse.Namespace) -> int:
+    """Reset every applied harness, then remove the xSync package."""
+    try:
+        install = current_install(sys.prefix)
+    except InstallError as error:
+        _fail(str(error))
+        return EXIT_ERROR
+
+    harnesses = _applied_harnesses()
+    purge = _purge_targets() if args.purge else []
+    commands = uninstall_commands(install)
+
+    print(term.heading("Uninstall xsync"))
+    print(term.rule())
+    for name, home, _ in harnesses:
+        print(f"   {term.yellow('~')} reset {name}  {term.dim(str(home))}")
+    for path in purge:
+        print(f"   {term.red('-')} delete {path}")
+    for command in commands:
+        print(f"   {term.red('-')} run {' '.join(command)}")
+    if install.source:
+        print(term.dim(f"   the source folder {install.source} stays"))
+    if not args.purge:
+        print(term.dim("   the profiles stay. Add --purge to delete them"))
+    print(term.rule())
+
+    if args.dry_run:
+        print(term.dim("   nothing changed (--dry-run)\n"))
+        return EXIT_OK
+
+    missing = _missing_tools(commands)
+    if missing:
+        _fail(f"install {', '.join(missing)} first. It is not on the PATH.")
+        return EXIT_ERROR
+
+    if not args.yes and not _confirm("Continue?"):
+        _fail("stopped. Nothing changed.")
+        return EXIT_ERROR
+
+    # Reset first. A failed reset stops before the package goes away, so
+    # the user can fix it and run the command again.
+    for name, _, reset in harnesses:
+        if reset() != EXIT_OK:
+            _fail(f"the reset of {name} failed. The package stays.")
+            return EXIT_ERROR
+
+    for path in purge:
+        if path.is_dir():
+            shutil.rmtree(path)
+        else:
+            path.unlink()
+    for path in purge:
+        # Remove the xsync folder too when nothing else is in it.
+        with contextlib.suppress(OSError):
+            path.parent.rmdir()
+
+    if not _run_all(commands):
+        return EXIT_ERROR
+    _ok("xsync is removed.")
+    print()
+    return EXIT_OK
 
 
 def _split_extra(argv: list[str]) -> tuple[list[str], list[str]]:

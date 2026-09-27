@@ -37,6 +37,28 @@ Or:
 
 The package needs Python 3.11 or later. The command is `xsync`.
 
+### Update
+
+    xsync update
+
+xSync finds the tool that installed it. An install from PyPI gets
+`uv tool upgrade` or `pipx upgrade`. A git checkout gets `git pull --ff-only`,
+then a reinstall. The command stops when the checkout has uncommitted
+changes. Add `--dry-run` to see the commands and run nothing.
+
+### Uninstall
+
+    xsync uninstall
+
+The command resets every harness that `apply` wrote, then removes the package.
+Your profiles and the source folder of a checkout stay. Add `--dry-run` to see
+the plan, or `--yes` to skip the question.
+
+Warning: `--purge` also deletes your profiles, your API keys, and the isolated
+homes. You cannot undo it.
+
+    xsync uninstall --purge
+
 ## Start
 
 ### 1. Make a profile
