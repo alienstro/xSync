@@ -1,3 +1,5 @@
+import pytest
+
 from xsync_cli.adapters.codex import load_rules, render_catalog, render_entry
 from xsync_cli.core.model import Model
 
@@ -154,10 +156,16 @@ def test_a_named_model_gets_its_own_model_messages():
     assert len(special["instructions_template"]) > len(generic["instructions_template"])
 
 
-def test_a_plain_model_gets_no_speed_tier():
+def test_every_codex_model_gets_the_fast_speed_tier():
     entry = render_entry(model(), RULES)
-    assert entry["additional_speed_tiers"] == []
-    assert entry["service_tiers"] == []
+    assert entry["additional_speed_tiers"] == ["fast"]
+    assert entry["service_tiers"] == [
+        {
+            "id": "priority",
+            "name": "Fast",
+            "description": "Faster responses, increased usage",
+        }
+    ]
 
 
 def test_the_named_openai_models_keep_their_tiers():
@@ -233,7 +241,7 @@ def test_a_name_rule_ignores_the_letter_case():
 
 def test_a_name_rule_does_not_match_a_different_model():
     entry = render_entry(model(slug="openai/gpt-5.5-mini"), RULES)
-    assert entry["additional_speed_tiers"] == []
+    assert entry["additional_speed_tiers"] == ["fast"]
 
 
 def test_an_exact_slug_rule_still_wins_over_a_name_rule():

@@ -35,8 +35,10 @@ effective_context_window_percent = 95
 include_skills_usage_instructions = false
 use_responses_lite = false
 default_context_window = 128000
-additional_speed_tiers = []
-service_tiers = []
+additional_speed_tiers = ["fast"]
+service_tiers = [
+  { id = "priority", name = "Fast", description = "Faster responses, increased usage" },
+]
 vision = false
 reasoning = false
 tools = true

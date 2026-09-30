@@ -115,6 +115,7 @@ you use it.
 | `xsync omp` | Open an OMP the same way. |
 | `xsync codex -- <args>` | The arguments after `--` go to the harness. |
 | `xsync codex apply` | Write the real Codex of the user. |
+| `xsync codex reset` | Reset all original Codex settings with a dated backup. |
 | `xsync claude apply` | Write the real Claude Code of the user. |
 | `xsync opencode apply` | Write the real OpenCode of the user. |
 | `xsync pi apply` | Write the real Pi model catalog. |
@@ -155,6 +156,84 @@ Delete a home at any time. The next command builds it again.
 
 Exit codes: `0` for success, `1` for an error, `2` when the endpoint does not
 answer.
+
+## Reset All Original Codex Settings
+
+Caution: This command removes every setting in the original `config.toml`.
+This includes custom providers, MCP settings, permissions, and project trust settings.
+Caution: The command disconnects Codex sessions that use this home.
+Finish active work before you run the command.
+
+    xsync codex reset
+
+The `xsync codex --reset` command performs the same full reset.
+The `xsync codex apply --reset` command removes only the applied xSync settings.
+
+The command asks for confirmation.
+Use `--yes` to confirm in a script.
+Use `--dry-run` to inspect the scope without changes.
+The command does not require an xSync profile or a working endpoint.
+
+The command saves the exact configuration in `config.toml.<UTC timestamp>.bak`.
+The backup permits access only by the file owner.
+The command then clears `config.toml`, the model cache, and the xSync state file.
+Codex supplies its defaults instead of values that xSync hard-codes.
+An absent `config.toml` stays absent.
+
+The command keeps authentication, sessions, skills, plugin files, and catalog files.
+The command does not change project configuration files, Codex profile files, environment variables, or managed settings.
+Those sources can still override Codex defaults.
+
+Start the original Codex after the reset.
+
+    CODEX_HOME="$HOME/.codex" codex
+
+## Remove the Applied xSync Settings
+
+Caution: Reset disconnects Codex sessions that use the original home.
+Finish active work before you run the reset.
+
+    xsync codex apply --reset
+
+The command resets the original Codex home, even when you run it inside an xSync Codex session.
+xSync ignores an inherited `CODEX_HOME` that points to an xSync profile home.
+xSync uses an explicit custom `CODEX_HOME` outside its profile homes.
+
+The reset removes the recorded catalog and clears `models_cache.json`.
+The reset also stops the daemon for this home, because the daemon can retain the old model catalog.
+The command asks for confirmation before it stops the daemon.
+Use `--yes` to confirm in a script.
+If the daemon stop fails, the reset keeps the configuration, catalog, cache, and state file unchanged.
+The reset also removes the endpoint model selection when it restores the OpenAI provider.
+The reset keeps your authentication, sessions, skills, plugins, and unrelated settings.
+If the configuration is already clear, the command clears the cache without `--force`.
+
+Restart the original Codex after the reset.
+Set the original home explicitly if the terminal inherits an xSync `CODEX_HOME`.
+
+    CODEX_HOME="$HOME/.codex" codex
+
+Do not use `xsync codex` to start Codex without an xSync profile.
+The `xsync codex` command creates the profile catalog again.
+
+## Refresh the Original Codex Catalog
+
+Caution: Apply disconnects Codex sessions that use the original home.
+Finish active work before you apply the catalog.
+
+    xsync codex apply
+
+The command writes the endpoint catalog into the original Codex home.
+The command stops this home's daemon before it writes the catalog.
+This prevents a new Codex terminal from reusing the daemon's old model list.
+The command asks for confirmation before it stops the daemon.
+Use `--yes` to confirm in a script.
+If the daemon stop fails, the command keeps the configuration and catalog unchanged.
+The command does not stop a daemon or write files with `--dry-run`.
+
+Start the original Codex after apply.
+
+    CODEX_HOME="$HOME/.codex" codex
 
 ## Claude Code
 
@@ -344,15 +423,16 @@ The match ignores the letter case.
   first, or use `xsync claude` and change nothing.
 - `apply --dry-run` writes nothing at all. It does not point the harness at
   the endpoint either.
-- `apply --reset` removes only what the state file records. It never
-  restores an old copy of the settings, because a harness adds its own
-  entries to that file over time.
+- `apply --reset` removes the recorded settings and restores the previous values of replaced keys.
+  The command does not restore an old copy of the complete settings file.
+  Codex reset also clears the model cache and removes the endpoint model selection when it restores the OpenAI provider.
 - `apply --reset` keeps the backup `<name>.bak`. The backup is the only way
   back after a reset.
 - With no state file, `apply --reset` prints the keys that it would remove
   and then stops. Add `--force` to continue. The command then asks a
   question before it removes anything. Add `--yes` to answer the question in
   a script.
+- Codex reset does not require `--force` when no custom catalog or provider configuration needs removal.
 - The setup hides the API key while you type it. It then shows the first
   five characters only, and it never shows the length of the key.
 - xSync never prints a whole API key.

@@ -10,6 +10,7 @@ import os
 import shutil
 import subprocess
 import sys
+import tempfile
 from collections.abc import Callable
 from getpass import getpass
 from pathlib import Path
@@ -55,7 +56,12 @@ from xsync_cli.adapters.codex_config import (
     wire_api_for_url,
     write_state,
 )
-from xsync_cli.adapters.codex_wiring import init_config, known_removals, reset_config
+from xsync_cli.adapters.codex_wiring import (
+    init_config,
+    known_removals,
+    reset_config,
+    reset_defaults,
+)
 from xsync_cli.core.atomic import write_json_atomic
 from xsync_cli.core.diff import diff_catalogs
 from xsync_cli.core.filters import apply_filters
@@ -357,12 +363,81 @@ def _confirm(question: str) -> bool:
     return answer.strip().lower() in ("y", "yes")
 
 
+def _stop_codex_daemon(
+    codex_home: Path, assume_yes: bool, operation: str = "reset"
+) -> bool:
+    """Stop the target daemon before its model configuration changes."""
+    socket_path = codex_home / "app-server-control" / "app-server-control.sock"
+    if not socket_path.exists():
+        return True
+
+    print(term.yellow(
+        f"   Caution: {operation.capitalize()} disconnects Codex sessions that use this home."
+    ))
+    if not assume_yes and not _confirm(
+        f"Stop the Codex daemon and {operation} this home?"
+    ):
+        _fail("stopped. Nothing was removed. Use --yes to confirm in a script.")
+        return False
+
+    executable = shutil.which("codex")
+    if executable is None:
+        raise ConfigError(
+            f"Codex is not on the PATH. Stop its daemon before {operation}."
+        )
+    environment = {**os.environ, "CODEX_HOME": str(codex_home)}
+    try:
+        # Daemon children can retain pipe handles after the command exits.
+        with tempfile.TemporaryFile() as stdout, tempfile.TemporaryFile() as stderr:
+            result = subprocess.run(
+                [executable, "app-server", "daemon", "stop"],
+                env=environment,
+                stdout=stdout,
+                stderr=stderr,
+                timeout=15,
+            )
+            stdout.seek(0)
+            stderr.seek(0)
+            output = stdout.read().decode("utf-8", errors="replace")
+            error_output = stderr.read().decode("utf-8", errors="replace")
+    except subprocess.TimeoutExpired as error:
+        detail = error.stderr or error.stdout or ""
+        if isinstance(detail, bytes):
+            detail = detail.decode("utf-8", errors="replace")
+        raise ConfigError(
+            f"Cannot stop the Codex daemon after 15 seconds. "
+            f"The {operation} did not change any files.\n{detail.strip()}"
+        ) from error
+    except OSError as error:
+        raise ConfigError(
+            f"Cannot stop the Codex daemon. The {operation} did not change any files.\n{error}"
+        ) from error
+    if result.returncode != 0:
+        detail = (error_output or result.stderr or output or result.stdout or "").strip()
+        raise ConfigError(
+            f"Cannot stop the Codex daemon. The {operation} did not change any files.\n"
+            f"{detail or f'Codex exited with code {result.returncode}.'}"
+        )
+    _ok("Stopped the Codex daemon for this home.")
+    return True
+
 def _do_reset(
     codex_home: Path, profile_name: str, force: bool, assume_yes: bool = False
 ) -> int:
     """Remove everything that xSync wrote."""
     state_path = codex_home / STATE_FILENAME
     state = read_state(state_path)
+    print(term.dim(f"   home: {codex_home}"))
+
+    if state is None:
+        config = read_config(codex_home / "config.toml")
+        providers = config.get("model_providers") or {}
+        if (
+            "model_catalog_json" not in config
+            and config.get("model_provider", "openai") == "openai"
+            and profile_name not in providers
+        ):
+            state = State(profile=profile_name)
 
     if state is None:
         planned = known_removals(profile_name)
@@ -396,17 +471,65 @@ def _do_reset(
             written_at="",
         )
 
-    removed = reset_config(codex_home / "config.toml", state)
+    if not _stop_codex_daemon(codex_home, assume_yes):
+        return EXIT_ERROR
+
+    removed = (
+        reset_config(codex_home / "config.toml", state)
+        if state.keys_written or state.blocks_written or state.files_written
+        else []
+    )
+    cache_path = codex_home / "models_cache.json"
+    if cache_path.exists():
+        cache_path.unlink()
+        removed.append(str(cache_path))
     clear_state(state_path)
     print(term.heading("Reset"))
     print(term.rule())
     for name in removed:
         print(f"   {term.red('-')} {name}")
     print(term.rule())
-    _ok("Codex is back at its own defaults.")
+    _ok("The Codex configuration is reset. The model cache is clear.")
+    print(term.dim("   Restart the original Codex to load its model list."))
     print()
     return EXIT_OK
 
+
+def _codex_reset_defaults(args: argparse.Namespace) -> int:
+    """Reset all settings in the original Codex configuration."""
+    if args.profile or args.init or args.reset or args.force or args.yolo or args.extra:
+        _fail("Use only --yes or --dry-run with codex reset.")
+        return EXIT_ERROR
+
+    codex_home = default_codex_home()
+    config_path = codex_home / "config.toml"
+    print(term.heading("Reset Codex Defaults"))
+    print(term.dim(f"   home: {codex_home}"))
+    print(term.yellow("   Caution: Reset removes every setting in config.toml."))
+    print(term.yellow("   Caution: Reset disconnects Codex sessions that use this home."))
+    print(term.dim("   A dated backup preserves the current config.toml."))
+    print(term.dim("   Authentication, sessions, skills, and plugin files stay."))
+
+    if args.dry_run:
+        print(term.dim("   The command would clear the configuration, model cache, and xSync state."))
+        print(term.dim("   no file written (--dry-run)\n"))
+        return EXIT_OK
+
+    if not args.yes and not _confirm("Reset all Codex settings in this home?"):
+        _fail("stopped. Nothing was removed. Use --yes to confirm in a script.")
+        return EXIT_ERROR
+
+    if not _stop_codex_daemon(codex_home, True):
+        return EXIT_ERROR
+    backup = reset_defaults(config_path)
+    (codex_home / "models_cache.json").unlink(missing_ok=True)
+    clear_state(codex_home / STATE_FILENAME)
+    if backup is not None:
+        _ok(f"Saved the configuration backup to {backup}")
+    _ok("Cleared every setting in the original config.toml.")
+    print(term.dim("   Restart the original Codex to load its default settings."))
+    print()
+    return EXIT_OK
 
 def _codex_apply(args: argparse.Namespace) -> int:
     """Write the real Codex home."""
@@ -464,6 +587,14 @@ def _codex_apply(args: argparse.Namespace) -> int:
         print(term.dim("   no file written (--dry-run)\n"))
         return EXIT_OK
 
+    print(term.dim(f"   home: {codex_home}"))
+    try:
+        if not _stop_codex_daemon(codex_home, args.yes, "apply"):
+            return EXIT_ERROR
+    except ConfigError as error:
+        print(f"error: {error}", file=sys.stderr)
+        return EXIT_ERROR
+
     # Write the catalog before the config refers to it. Codex does not
     # start when `model_catalog_json` names an absent file.
     write_json_atomic(catalog_path, catalog)
@@ -485,6 +616,7 @@ def _codex_apply(args: argparse.Namespace) -> int:
             f"Codex now routes to {term.bold(profile.name)} "
             f"{term.dim('(' + profile.base_url + ')')}"
         )
+    print(term.dim("   Restart the original Codex to load the updated model list."))
     print()
     return EXIT_OK
 
@@ -1272,6 +1404,15 @@ def _open_harness(args: argparse.Namespace, harness: str) -> int:
 
 def cmd_codex(args: argparse.Namespace) -> int:
     """Open an isolated Codex, or write the real one."""
+    if args.action is None and args.reset:
+        args.action = "reset"
+        args.reset = False
+    if args.action == "reset":
+        try:
+            return _codex_reset_defaults(args)
+        except (ConfigError, OSError) as error:
+            print(f"error: {error}", file=sys.stderr)
+            return EXIT_ERROR
     if args.action == "apply":
         # `apply` writes the real home. It therefore wires the endpoint.
         # A dry run writes nothing, so it never wires anything.
@@ -1313,13 +1454,18 @@ def cmd_omp(args: argparse.Namespace) -> int:
     return _open_harness(args, "omp")
 
 
-def _add_harness_arguments(parser: argparse.ArgumentParser) -> None:
+def _add_harness_arguments(
+    parser: argparse.ArgumentParser, *, allow_reset: bool = False
+) -> None:
     """The arguments that both harness commands share."""
     parser.add_argument(
         "action",
         nargs="?",
-        choices=["apply"],
-        help="apply writes the real home of the harness",
+        choices=["apply", "reset"] if allow_reset else ["apply"],
+        help=(
+            "apply writes the real home; reset restores all Codex settings to defaults"
+            if allow_reset else "apply writes the real home of the harness"
+        ),
     )
     parser.add_argument("--profile", help="use this profile for one run")
     parser.add_argument(
@@ -1331,13 +1477,17 @@ def _add_harness_arguments(parser: argparse.ArgumentParser) -> None:
         help="apply: point the harness at the endpoint (implied by apply)",
     )
     parser.add_argument(
-        "--reset", action="store_true", help="apply: remove everything xsync wrote"
+        "--reset", action="store_true",
+        help=(
+            "without apply: reset all Codex settings; with apply: remove xsync settings"
+            if allow_reset else "apply: remove everything xsync wrote"
+        ),
     )
     parser.add_argument(
         "--force", action="store_true", help="apply: reset without a state file"
     )
     parser.add_argument(
-        "--yes", action="store_true", help="apply: answer yes to the reset question"
+        "--yes", action="store_true", help="confirm reset and the Codex daemon stop"
     )
     parser.add_argument(
         "--yolo",
@@ -1377,10 +1527,11 @@ def build_parser() -> argparse.ArgumentParser:
         description=(
             "Open a Codex that talks to the endpoint of the profile. The real "
             "Codex of the user stays as it is. Add `apply` to write the real "
-            "Codex instead."
+            "Codex instead. Add `reset` to restore all original Codex settings "
+            "to defaults with a dated backup."
         ),
     )
-    _add_harness_arguments(codex)
+    _add_harness_arguments(codex, allow_reset=True)
     codex.set_defaults(func=cmd_codex)
 
     claude = sub.add_parser(

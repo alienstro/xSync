@@ -7,6 +7,7 @@ touch `config.toml`.
 from __future__ import annotations
 
 import datetime as dt
+import hashlib
 import os
 from pathlib import Path
 from typing import Any
@@ -132,6 +133,7 @@ def reset_config(config_path: Path, state: State) -> list[str]:
     before = file_sha256(config_path)
     document = _load_document(config_path)
     removed: list[str] = []
+    active_provider = document.get("model_provider")
 
     for key in state.keys_written:
         if key in state.keys_replaced:
@@ -140,6 +142,15 @@ def reset_config(config_path: Path, state: State) -> list[str]:
         elif key in document:
             del document[key]
             removed.append(key)
+
+    if (
+        active_provider == state.profile
+        and document.get("model_provider", "openai") == "openai"
+        and "model" not in state.keys_written
+        and "model" in document
+    ):
+        del document["model"]
+        removed.append("model")
 
     for block in state.blocks_written:
         parent_name, _, child = block.partition(".")
@@ -159,3 +170,19 @@ def reset_config(config_path: Path, state: State) -> list[str]:
             removed.append(name)
 
     return removed
+
+def reset_defaults(config_path: Path) -> Path | None:
+    """Save a dated backup, then clear every user configuration value."""
+    if not config_path.exists():
+        return None
+
+    contents = config_path.read_bytes()
+    before = hashlib.sha256(contents).hexdigest()
+    stamp = dt.datetime.now(dt.timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
+    backup = config_path.with_name(f"{config_path.name}.{stamp}.bak")
+    descriptor = os.open(backup, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    with os.fdopen(descriptor, "wb") as stream:
+        stream.write(contents)
+
+    _atomic_toml_write(config_path, tomlkit.document(), before)
+    return backup

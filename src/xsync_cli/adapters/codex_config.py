@@ -10,6 +10,7 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
 
+from xsync_cli.core.homes import homes_root
 from xsync_cli.core.profiles import Profile
 
 STATE_FILENAME = ".xsync-state.json"
@@ -21,8 +22,12 @@ class ConfigError(Exception):
 
 
 def default_codex_home() -> Path:
-    """The Codex home directory."""
-    return Path(os.environ.get("CODEX_HOME") or Path.home() / ".codex")
+    """Return the original home, not an inherited xSync profile home."""
+    home = Path(os.environ.get("CODEX_HOME") or Path.home() / ".codex")
+    resolved = home.resolve()
+    if resolved.name == "codex" and resolved.parent.parent == homes_root().resolve():
+        return Path.home() / ".codex"
+    return home
 
 
 def read_config(path: Path) -> dict[str, Any]:
